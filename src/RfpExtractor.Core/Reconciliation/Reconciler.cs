@@ -195,6 +195,21 @@ public sealed class Reconciler : IReconciler
         report.PrimaryOnlyCount = final.Count(q => q.FoundBy == FoundBy.Text);
         report.SecondaryOnlyCount = final.Count(q => q.FoundBy == FoundBy.Vision);
 
+        // Reconciliation-quality guard. When both legs ran but agreed on only a small fraction of
+        // what each found, the merged list is likely inflated with cross-leg DUPLICATES the matcher
+        // missed — the common failure mode on born-digital, TABLE-HEAVY documents: the vision leg
+        // re-derives the same grids but labels the cells differently, so the coordinate/text keys
+        // don't line up (and the paraphrase fuzzy pass only covers body questions, not grid cells).
+        // The merged count is then NOT trustworthy; the single-leg (text) count usually is. Surface
+        // it loudly rather than let an inflated headline stand.
+        var smallerLeg = Math.Min(report.PrimaryCount, report.SecondaryCount);
+        if (smallerLeg >= 20 && report.AgreedCount < 0.6 * smallerLeg)
+            report.Warnings.Add(
+                $"Low reconciliation match rate: only {report.AgreedCount} of ~{smallerLeg} questions matched across " +
+                $"the two legs, so the merged list ({final.Count}) likely contains cross-leg duplicates (e.g. the same " +
+                $"table grids re-derived by each leg). For born-digital documents (real text layer) prefer " +
+                $"--strategy=text; reserve vision/both for scanned or image-only files.");
+
         return new ReconciledResult
         {
             Merged = new ExtractionResult { DocumentSchema = schema, Questions = final },

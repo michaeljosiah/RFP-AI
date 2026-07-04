@@ -499,6 +499,38 @@ public class ReconcilerTests
             => throw new InvalidOperationException("boom");
     }
 
+    [Fact]
+    public async Task Low_cross_leg_match_rate_warns_about_likely_duplicates()
+    {
+        // Born-digital, table-heavy failure mode (EQDP --strategy=both): each leg finds ~the same
+        // questions but labels them differently, so few reconcile and the merge is duplicate-heavy.
+        var p = WithSchema(Result(Enumerable.Range(0, 25)
+            .Select(i => Body($"p{i}", $"AT-P{i}", $"primary question {i}", $"pverb {i}")).ToArray()));
+        var s = Result(Enumerable.Range(0, 25)
+            .Select(i => Body($"s{i}", $"AT-S{i}", $"secondary question {i}", $"sverb {i}")).ToArray());
+
+        var r = await Run(p, s);
+
+        Assert.Equal(0, r.Report.AgreedCount);
+        Assert.Equal(50, r.Report.MergedCount);                       // nothing merged -> duplicated
+        Assert.Contains(r.Report.Warnings, w => w.Contains("Low reconciliation match rate") && w.Contains("--strategy=text"));
+    }
+
+    [Fact]
+    public async Task Healthy_match_rate_does_not_warn()
+    {
+        // Both legs see the same 25 printed questions (identical verbatim) -> all match, no warning.
+        var p = WithSchema(Result(Enumerable.Range(0, 25)
+            .Select(i => Body($"p{i}", $"AT-P{i}", $"question {i}", $"verb {i}")).ToArray()));
+        var s = Result(Enumerable.Range(0, 25)
+            .Select(i => Body($"s{i}", $"AT-S{i}", $"reworded {i}", $"verb {i}")).ToArray());
+
+        var r = await Run(p, s);
+
+        Assert.Equal(25, r.Report.AgreedCount);
+        Assert.DoesNotContain(r.Report.Warnings, w => w.Contains("Low reconciliation match rate"));
+    }
+
     private static ExtractionResult Result(params Question[] qs) => new() { Questions = qs.ToList() };
 
     /// <summary>Adds a minimal schema so the invariant can hold for the primary questions.</summary>

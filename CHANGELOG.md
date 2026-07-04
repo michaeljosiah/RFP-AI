@@ -3,6 +3,16 @@
 Newest first. Dates are when the work landed; entries before 2026-07-04 predate version control
 (the project moved to git + GitHub `RFP-AI` on 2026-07-04) and are reconstructed from the build log.
 
+## 2026-07-04 — reconciliation-quality warning for low cross-leg match
+
+- **Low reconciliation match rate now warns.** A `--strategy=both` run on the EQDP produced 575
+  merged questions vs the trustworthy 379 from text-only: the vision leg re-derived the same grids
+  with differently-labelled cells, so only 181 of ~378 reconciled and the rest (197+197) were
+  double-counted (table_cells 304→476, data_entry_tables 13→22). The paraphrase fuzzy pass covers
+  body questions, not grid cells, and was capped out anyway. The reconciler now emits a loud
+  warning when the two legs agree on <60% of the smaller leg, pointing born-digital documents at
+  `--strategy=text`. Diagnostic only — no counts change. (+2 tests.)
+
 ## 2026-07-04 — EQDP run findings: table cells no longer decomposed
 
 - **Table cells are atomic — never split, never sent to the LLM.** The EQDP run (a table-heavy
