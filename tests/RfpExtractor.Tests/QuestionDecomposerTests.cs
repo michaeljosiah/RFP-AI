@@ -88,6 +88,33 @@ public class QuestionDecomposerTests
     }
 
     [Fact]
+    public async Task Table_cells_are_tagged_but_never_split_even_if_the_model_returns_multiple_parts()
+    {
+        // A single grid cell whose column/row headers mention several periods — the model fans it
+        // into one part per period. A cell is ONE value: tag it, never split it (EQDP finding).
+        var canned = """
+            { "questions": [
+              { "id": "Q1", "parts": [
+                  { "question_text": "Portfolio return for the 1-year period.", "answer_type": "percentage", "category": "performance", "units": "%", "requires_external_input": true },
+                  { "question_text": "Portfolio return for the 3-year period.", "answer_type": "percentage", "category": "performance", "units": "%", "requires_external_input": true },
+                  { "question_text": "Portfolio return for the 5-year period.", "answer_type": "percentage", "category": "performance", "units": "%", "requires_external_input": true }
+              ] }
+            ] }
+            """;
+        var r = new ExtractionResult
+        {
+            Questions = { Q("Q1", "Portfolio Return (%, SGD terms, gross) for 1/3/5-year periods.", AnswerType.Percentage, "Performance", QuestionSource.TableCell, Audience.Applicant) }
+        };
+
+        var warnings = await new QuestionDecomposer(new CannedChat(canned)).DecomposeAsync(r, FastOptions, CancellationToken.None);
+
+        Assert.Empty(warnings);
+        Assert.Empty(r.Questions[0].Parts);                            // forced single despite 3 returned parts
+        Assert.Equal(QuestionCategory.Performance, r.Questions[0].Retrieval!.Category);
+        Assert.Equal(ExpectedFormat.Value, r.Questions[0].Retrieval!.ExpectedFormat);   // table_cell -> value
+    }
+
+    [Fact]
     public async Task Llm_failure_retries_then_leaves_deterministic_baseline_and_warns()
     {
         var chat = new FailingChat();

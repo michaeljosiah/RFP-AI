@@ -96,9 +96,14 @@ public sealed class QuestionDecomposer : IQuestionDecomposer
                     if (!decomp.TryGetValue(q.QuestionId, out var dq) || dq.Parts.Count == 0) continue;
                     var cur = result.Questions[i];
 
-                    // A document request / upload is atomic by nature — one requested document, one
-                    // part — even if the model tried to split it by the periods/funds it mentions.
+                    // Atomic-by-nature sources are TAGGED but never SPLIT, even if the model returned
+                    // several parts:
+                    //  - a data-entry table cell is ONE cell / ONE value (the model sometimes splits it
+                    //    by the periods or sub-rows its column/row headers mention — e.g. a single
+                    //    "Portfolio Return" cell fanned into one part per 1/3/5-year period);
+                    //  - a document request / upload is one deliverable (split attempts by period/fund).
                     var single = dq.Parts.Count == 1
+                        || cur.Source == QuestionSource.TableCell
                         || cur.Source == QuestionSource.DocumentRequest
                         || cur.AnswerType == AnswerType.DocumentUpload;
                     if (single)
