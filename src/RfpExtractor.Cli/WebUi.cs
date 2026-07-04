@@ -621,8 +621,9 @@ function legBar(id, label) {
   legs[id] = el;
   return el;
 }
+const LEG_LABELS = { vision: 'Vision — pages', text: 'Text — chunks', grid: 'Grid — sheets', decompose: 'Decompose — batches' };
 function updateLeg(id, done, total) {
-  const el = legs[id] || legBar(id, id === 'vision' ? 'Vision — pages' : id === 'text' ? 'Text — chunks' : 'Grid — sheets');
+  const el = legs[id] || legBar(id, LEG_LABELS[id] || id);
   el.querySelector('.ct').textContent = done + ' / ' + (total > 0 ? total : '—');
   if (total > 0) el.querySelector('.bar').style.width = Math.round(100 * done / total) + '%';
 }

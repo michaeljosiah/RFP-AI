@@ -62,9 +62,12 @@ public interface IFuzzyMatcher
         IReadOnlyList<Question> primary, IReadOnlyList<Question> secondary, CancellationToken ct);
 }
 
-/// <summary>Adds a <see cref="RetrievalHint"/> to each applicant-facing question, in place, so a
-/// downstream answer-retrieval stage can query knowledge sources per question.</summary>
-public interface IRetrievalEnricher
+/// <summary>Splits each applicant-facing printed question into its atomic parts and tags every part
+/// with a <see cref="RetrievalHint"/>, in place, so a downstream answer-retrieval stage can query
+/// knowledge sources per ask. Returns warnings for batches that failed after retries (those keep
+/// their deterministic baseline).</summary>
+public interface IQuestionDecomposer
 {
-    Task EnrichAsync(ExtractionResult result, CancellationToken ct);
+    Task<IReadOnlyList<string>> DecomposeAsync(
+        ExtractionResult result, Pipeline.ExtractionOptions options, CancellationToken ct);
 }

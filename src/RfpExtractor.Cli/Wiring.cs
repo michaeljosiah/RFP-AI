@@ -6,7 +6,11 @@ using Microsoft.Extensions.Configuration;
 using OpenAI;
 using OpenAI.Chat;
 using RfpExtractor.Cli.GenCore;
+using RfpExtractor.Core;
 using RfpExtractor.Core.Abstractions;
+using RfpExtractor.Core.Llm;
+using RfpExtractor.Core.Pipeline;
+using RfpExtractor.Core.Reconciliation;
 using RfpExtractor.LibreOffice;
 using RfpExtractor.Telerik;
 
@@ -60,11 +64,26 @@ public static class Wiring
     }
 
     /// <summary>
-    /// The sampling temperature to send for a model, or <c>null</c> to omit it. Delegates to
-    /// <see cref="Core.Llm.ModelCapabilities.TemperatureFor"/> (GPT-5 / o-series reject non-default
-    /// temperature); kept here so the CLI has one wiring facade.
+    /// The full, ready-to-run extraction stack for an engine + provider + model: chat client,
+    /// extractor, reconciler (with fuzzy matcher), decomposer and router — profile-shaped once via
+    /// <see cref="ModelProfile.For"/>. Both hosts (batch CLI and the serve UI) build EXACTLY this,
+    /// so the composition lives in one place.
     /// </summary>
-    public static float? TemperatureFor(string? model) => Core.Llm.ModelCapabilities.TemperatureFor(model);
+    public static (ExtractionService Service, string Model) CreateService(
+        string engine, string provider, string? model, IConfiguration config, string? userEmail = null)
+    {
+        var (renderer, text, sheet) = CreateEngine(engine, config);
+        var chat = CreateChatClient(provider, model, config, userEmail);
+        var eff = EffectiveModel(provider, model, config);
+        var profile = ModelProfile.For(eff);
+
+        var llm = new AgentLlmExtractor(chat, profile);
+        var reconciler = new Reconciler(new AgentFuzzyMatcher(chat, profile));
+        var router = new PipelineRouter(
+            new DocumentPipeline(renderer, text, llm, reconciler),
+            new SpreadsheetPipeline(sheet, renderer, llm, reconciler));
+        return (new ExtractionService(router, new QuestionDecomposer(chat, profile)), eff);
+    }
 
     public static IChatClient CreateChatClient(string provider, string? model, IConfiguration config, string? userEmail = null)
     {
@@ -95,7 +114,7 @@ public static class Wiring
                     ?? throw new InvalidOperationException(
                         "Set AZURE_OPENAI_ENDPOINT (e.g. https://<resource>.openai.azure.com/openai/v1).");
                 var resolvedModel = EffectiveModel(provider, model, config);
-                var options = new OpenAIClientOptions { Endpoint = NormalizeAzureV1(endpoint) };
+                var options = new OpenAIClientOptions { Endpoint = OpenAIV1.Normalize(endpoint) };
                 var apiKey = Environment.GetEnvironmentVariable("AZURE_OPENAI_API_KEY") ?? config["AzureOpenAIApiKey"];
 
                 OpenAIClient azure;
@@ -144,17 +163,5 @@ public static class Wiring
             default:
                 throw new ArgumentException($"Unknown provider '{provider}' (use gencore, azure, openai or claude).");
         }
-    }
-
-    /// <summary>Ensures the Azure OpenAI v1 endpoint carries the required "/openai/v1" path suffix.</summary>
-    private static Uri NormalizeAzureV1(string baseUri)
-    {
-        var builder = new UriBuilder(baseUri);
-        var path = builder.Path.TrimEnd('/');
-        const string suffix = "/openai/v1";
-        builder.Path = path.EndsWith(suffix, StringComparison.OrdinalIgnoreCase)
-            ? path
-            : (string.IsNullOrEmpty(path) || path == "/" ? suffix : path + suffix);
-        return builder.Uri;
     }
 }

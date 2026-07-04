@@ -2,12 +2,15 @@ using System.Runtime.CompilerServices;
 using Microsoft.Extensions.AI;
 using RfpExtractor.Core.Llm;
 using RfpExtractor.Core.Models;
+using RfpExtractor.Core.Pipeline;
 using Xunit;
 
 namespace RfpExtractor.Tests;
 
-public class RetrievalEnricherTests
+public class QuestionDecomposerTests
 {
+    private static ExtractionOptions FastOptions => new() { RetryDelay = TimeSpan.Zero };
+
     [Fact]
     public async Task Decomposes_compound_into_parts_tags_single_and_skips_internal()
     {
@@ -32,7 +35,8 @@ public class RetrievalEnricherTests
             }
         };
 
-        await new AgentRetrievalEnricher(new CannedChat(canned)).EnrichAsync(r, CancellationToken.None);
+        var warnings = await new QuestionDecomposer(new CannedChat(canned)).DecomposeAsync(r, FastOptions, CancellationToken.None);
+        Assert.Empty(warnings);
 
         // Q1 is compound -> parent has parts, retrieval lives on the parts
         var q1 = r.Questions[0];
@@ -75,22 +79,29 @@ public class RetrievalEnricherTests
             Questions = { Q("Q1", "Upload attribution for 1, 3 and 5 year periods.", AnswerType.DocumentUpload, "Data request", QuestionSource.DocumentRequest, Audience.Applicant) }
         };
 
-        await new AgentRetrievalEnricher(new CannedChat(canned)).EnrichAsync(r, CancellationToken.None);
+        var warnings = await new QuestionDecomposer(new CannedChat(canned)).DecomposeAsync(r, FastOptions, CancellationToken.None);
 
+        Assert.Empty(warnings);
         Assert.Empty(r.Questions[0].Parts);                            // forced single despite 2 returned parts
         Assert.Equal(QuestionCategory.Performance, r.Questions[0].Retrieval!.Category);
         Assert.Equal(ExpectedFormat.Document, r.Questions[0].Retrieval!.ExpectedFormat);
     }
 
     [Fact]
-    public async Task Llm_failure_leaves_deterministic_baseline()
+    public async Task Llm_failure_retries_then_leaves_deterministic_baseline_and_warns()
     {
+        var chat = new FailingChat();
         var r = new ExtractionResult
         {
             Questions = { Q("Q1", "Provide the launch date.", AnswerType.Date, "Fund Details", QuestionSource.Body, Audience.Applicant) }
         };
 
-        await new AgentRetrievalEnricher(new FailingChat()).EnrichAsync(r, CancellationToken.None);
+        var warnings = await new QuestionDecomposer(chat).DecomposeAsync(r, FastOptions, CancellationToken.None);
+
+        Assert.Equal(3, chat.Calls);                           // retried like the extraction legs
+        var w = Assert.Single(warnings);                       // failure is REPORTED, never silent
+        Assert.Contains("decompose batch 1/1", w);
+        Assert.Contains("failed after 3 attempts", w);
 
         var q = r.Questions[0];
         Assert.Empty(q.Parts);                                 // no decomposition without the LLM
@@ -105,7 +116,7 @@ public class RetrievalEnricherTests
     [InlineData("nonsense", QuestionCategory.Other)]
     [InlineData(null, QuestionCategory.Other)]
     public void Parse_category_is_tolerant(string? value, QuestionCategory expected)
-        => Assert.Equal(expected, AgentRetrievalEnricher.ParseCategory(value));
+        => Assert.Equal(expected, QuestionDecomposer.ParseCategory(value));
 
     [Theory]
     [InlineData("currency", AnswerType.Currency)]
@@ -115,7 +126,7 @@ public class RetrievalEnricherTests
     [InlineData("nonsense", AnswerType.Text)]   // -> fallback
     [InlineData("", AnswerType.Text)]
     public void Parse_answer_type_is_tolerant(string? value, AnswerType expected)
-        => Assert.Equal(expected, AgentRetrievalEnricher.ParseAnswerType(value, AnswerType.Text));
+        => Assert.Equal(expected, QuestionDecomposer.ParseAnswerType(value, AnswerType.Text));
 
     [Theory]
     [InlineData(AnswerType.DocumentUpload, QuestionSource.DocumentRequest, ExpectedFormat.Document)]
@@ -125,7 +136,7 @@ public class RetrievalEnricherTests
     [InlineData(AnswerType.LongText, QuestionSource.Body, ExpectedFormat.Narrative)]
     [InlineData(AnswerType.Text, QuestionSource.Body, ExpectedFormat.ShortText)]
     public void Expected_format_derivation(AnswerType type, QuestionSource source, ExpectedFormat expected)
-        => Assert.Equal(expected, AgentRetrievalEnricher.ExpectedFormatFor(type, source));
+        => Assert.Equal(expected, QuestionDecomposer.ExpectedFormatFor(type, source));
 
     private static Question Q(string id, string text, AnswerType type, string section, QuestionSource source, Audience audience) => new()
     {
@@ -152,6 +163,7 @@ public class RetrievalEnricherTests
 
     private sealed class FailingChat : IChatClient
     {
+        public int Calls;
         public void Dispose() { }
         public object? GetService(Type serviceType, object? serviceKey = null) => null;
         public Task<ChatResponse> GetResponseAsync(IEnumerable<ChatMessage> messages, ChatOptions? options = null, CancellationToken ct = default)
@@ -159,6 +171,7 @@ public class RetrievalEnricherTests
         public async IAsyncEnumerable<ChatResponseUpdate> GetStreamingResponseAsync(
             IEnumerable<ChatMessage> messages, ChatOptions? options = null, [EnumeratorCancellation] CancellationToken ct = default)
         {
+            Interlocked.Increment(ref Calls);
             await Task.Yield();
             throw new InvalidOperationException("gateway down");
 #pragma warning disable CS0162

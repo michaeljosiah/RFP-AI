@@ -14,7 +14,6 @@ namespace RfpExtractor.Cli.GenCore;
 /// </summary>
 public static class GenCoreChatClientFactory
 {
-    private const string V1Suffix = "/openai/v1";
     private static readonly TimeSpan Timeout = TimeSpan.FromMinutes(5);
 
     public static IChatClient Create(
@@ -26,7 +25,7 @@ public static class GenCoreChatClientFactory
 
         var options = new OpenAIClientOptions
         {
-            Endpoint = NormalizeV1(baseUri),
+            Endpoint = OpenAIV1.Normalize(baseUri),
             Transport = new HttpClientPipelineTransport(http),
             NetworkTimeout = Timeout,
         };
@@ -35,19 +34,6 @@ public static class GenCoreChatClientFactory
         // placeholder because GenCore authenticates via the api-key header, not a bearer token.
         var chatClient = new ChatClient(model, new ApiKeyCredential("unused-proxy-api-key"), options);
         return chatClient.AsIChatClient();
-    }
-
-    private static Uri NormalizeV1(string baseUri)
-    {
-        if (string.IsNullOrWhiteSpace(baseUri))
-            throw new InvalidOperationException("GenCore BaseUri is missing.");
-
-        var builder = new UriBuilder(baseUri);
-        var path = builder.Path.TrimEnd('/');
-        builder.Path = path.EndsWith(V1Suffix, StringComparison.OrdinalIgnoreCase)
-            ? path
-            : (string.IsNullOrEmpty(path) || path == "/" ? V1Suffix : path + V1Suffix);
-        return builder.Uri;
     }
 }
 

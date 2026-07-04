@@ -31,39 +31,64 @@ public sealed record ExtractionOptions(
     /// <summary>Fires once per completed unit (page / text chunk / sheet) with that unit's result —
     /// lets a UI stream discovered questions in real time. Leg is "vision" | "text" | "grid".</summary>
     public Action<string, ExtractionResult>? OnPartialResult { get; init; }
+
+    /// <summary>Run the post-reconciliation decomposition pass (printed questions -> atomic parts +
+    /// retrieval tags). CLI flag --no-decompose disables it, leaving printed-level questions.</summary>
+    public bool Decompose { get; init; } = true;
 }
 
 /// <summary>Per-call retry + partial-failure tolerance: with 60+ LLM calls per large document, a
-/// transient gateway blip must cost one retry, not the whole run.</summary>
+/// transient gateway blip must cost one retry, not the whole run. One policy for EVERY best-effort
+/// LLM call (extraction legs AND the decomposition pass) so failure behaviour is uniform.</summary>
 internal static class Resilience
 {
     internal const int MaxAttempts = 3;
 
-    internal static async Task<ExtractionResult> SafeExtractAsync(
-        Func<Task<ExtractionResult>> call, string label,
-        ConcurrentBag<string> warnings, ExtractionOptions opts, CancellationToken ct)
+    /// <summary>Retries up to <see cref="MaxAttempts"/>; on final failure adds a warning and returns
+    /// <c>null</c> so the caller supplies its own harmless fallback.</summary>
+    internal static async Task<T?> TryAsync<T>(
+        Func<Task<T>> call, string label, ConcurrentBag<string> warnings,
+        TimeSpan retryDelay, Action<string>? onProgress, CancellationToken ct) where T : class
     {
         for (int attempt = 1; ; attempt++)
         {
             try
             {
                 var result = await call();
-                opts.OnProgress?.Invoke($"{label}: done");
+                onProgress?.Invoke($"{label}: done");
                 return result;
             }
             catch (OperationCanceledException) { throw; }
             catch (Exception ex) when (attempt < MaxAttempts)
             {
-                opts.OnProgress?.Invoke($"{label}: attempt {attempt} failed ({ex.Message}); retrying");
-                await Task.Delay(opts.RetryDelay * attempt, ct);
+                onProgress?.Invoke($"{label}: attempt {attempt} failed ({ex.Message}); retrying");
+                await Task.Delay(retryDelay * attempt, ct);
             }
             catch (Exception ex)
             {
                 warnings.Add($"{label} failed after {MaxAttempts} attempts: {ex.Message}");
-                opts.OnProgress?.Invoke($"{label}: FAILED - continuing without it");
-                return new ExtractionResult();   // empty result stitches harmlessly
+                onProgress?.Invoke($"{label}: FAILED - continuing without it");
+                return null;
             }
         }
+    }
+
+    internal static async Task<ExtractionResult> SafeExtractAsync(
+        Func<Task<ExtractionResult>> call, string label,
+        ConcurrentBag<string> warnings, ExtractionOptions opts, CancellationToken ct)
+        => await TryAsync(call, label, warnings, opts.RetryDelay, opts.OnProgress, ct)
+           ?? new ExtractionResult();   // empty result stitches harmlessly
+}
+
+/// <summary>The shared tail of every pipeline run: collected warnings + invariant check + metrics.</summary>
+internal static class ResultFinalizer
+{
+    internal static ReconciledResult Finalize(ReconciledResult result, ConcurrentBag<string> warnings)
+    {
+        foreach (var w in warnings) result.Report.Warnings.Add(w);
+        foreach (var e in InvariantValidator.Validate(result.Merged)) result.Report.Warnings.Add(e);
+        ReportMetrics.Populate(result.Report, result.Merged);
+        return result;
     }
 }
 
@@ -110,10 +135,7 @@ public sealed class DocumentPipeline
             result = await _reconciler.ReconcileAsync(primary: text, secondary: vision, groundTruth, opts.FuzzyReconcile, ct);
         }
 
-        foreach (var w in warnings) result.Report.Warnings.Add(w);
-        foreach (var e in InvariantValidator.Validate(result.Merged)) result.Report.Warnings.Add(e);
-        ReportMetrics.Populate(result.Report, result.Merged);
-        return result;
+        return ResultFinalizer.Finalize(result, warnings);
     }
 
     private async Task<ExtractionResult> RunVisionLegAsync(
@@ -202,13 +224,7 @@ public sealed class SpreadsheetPipeline
         var gridResult = perSheet.Length == 0 ? new ExtractionResult() : ResultMerger.StitchPages(perSheet);
 
         if (opts.Strategy != Strategy.Both)
-        {
-            var single = ReconciledResult.FromSingle(gridResult);
-            foreach (var w in warnings) single.Report.Warnings.Add(w);
-            foreach (var e in InvariantValidator.Validate(single.Merged)) single.Report.Warnings.Add(e);
-            ReportMetrics.Populate(single.Report, single.Merged);
-            return single;
-        }
+            return ResultFinalizer.Finalize(ReconciledResult.FromSingle(gridResult), warnings);
 
         // optional vision cross-check (xlsx -> pdf -> image)
         var pages = await _renderer.RenderToImagesAsync(path, opts.Dpi, ct);
@@ -229,10 +245,7 @@ public sealed class SpreadsheetPipeline
         opts.OnProgress?.Invoke("reconcile: matching legs...");
         var result = await _reconciler.ReconcileAsync(primary: gridResult, secondary: vision,
             Array.Empty<TableStructure>(), opts.FuzzyReconcile, ct);
-        foreach (var w in warnings) result.Report.Warnings.Add(w);
-        foreach (var e in InvariantValidator.Validate(result.Merged)) result.Report.Warnings.Add(e);
-        ReportMetrics.Populate(result.Report, result.Merged);
-        return result;
+        return ResultFinalizer.Finalize(result, warnings);
     }
 
     /// <summary>

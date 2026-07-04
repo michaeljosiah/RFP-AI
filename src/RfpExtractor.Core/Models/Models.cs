@@ -88,7 +88,7 @@ public sealed record SchemaRef
     public int? Page { get; init; }
 }
 
-/// <summary>Retrieval-oriented enrichment added AFTER reconciliation (see <c>AgentRetrievalEnricher</c>)
+/// <summary>Retrieval-oriented tags added AFTER reconciliation (see <c>QuestionDecomposer</c>)
 /// so an answer-retrieval stage can query knowledge sources per question. Nullable like
 /// <see cref="Binding"/> so it stays out of the extraction schema.</summary>
 public sealed record RetrievalHint

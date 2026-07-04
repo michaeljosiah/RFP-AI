@@ -77,7 +77,10 @@ public static class ServeCommand
         });
 
         // ---- launcher checks (SSE): runtime -> engine -> provider config -> live LLM ping ----
-        app.MapGet("/api/checks", async (HttpContext ctx) =>
+        // ASP0016 false positive: the analyzer attributes the tuple-returning CHECK lambdas (passed
+        // to the local Check() helper) to the route handler itself. The handler returns plain Task.
+#pragma warning disable ASP0016
+        app.MapGet("/api/checks", async Task (HttpContext ctx) =>
         {
             var engine = ctx.Request.Query["engine"].FirstOrDefault() ?? defEngine;
             var provider = ctx.Request.Query["provider"].FirstOrDefault() ?? defProvider;
@@ -172,6 +175,7 @@ public static class ServeCommand
 
             await Emit(new { kind = "checks-done" });
         });
+#pragma warning restore ASP0016
 
         // ---- start an extraction: multipart upload + options -> job id ----
         app.MapPost("/api/extract", async (HttpContext ctx) =>
@@ -287,25 +291,15 @@ public static class ServeCommand
         void Push(object p) => job.Events.Writer.TryWrite(Ser(p));
         try
         {
-            Push(new { kind = "stage", file = job.FileName, engine = o.Engine, provider = o.Provider,
-                       model = string.IsNullOrWhiteSpace(o.Model) ? Wiring.ResolveDefaultModel(config) : o.Model,
-                       strategy = o.Strategy.ToString().ToLowerInvariant() });
+            // One composition point (same stack as the batch CLI): engine + provider + model profile.
+            var (service, model) = Wiring.CreateService(o.Engine, o.Provider, o.Model, config);
 
-            var (renderer, text, sheet) = Wiring.CreateEngine(o.Engine, config);
-            var chat = Wiring.CreateChatClient(o.Provider, o.Model, config);
-            var effModel = Wiring.EffectiveModel(o.Provider, o.Model, config);
-            var temperature = Wiring.TemperatureFor(effModel);
-            var nativeSchema = ModelCapabilities.SupportsNativeJsonSchema(effModel);
-            var maxTokens = ModelCapabilities.MaxOutputTokensFor(effModel);
-            var llm = new AgentLlmExtractor(chat, temperature, nativeSchema, maxTokens);
-            var reconciler = new Reconciler(new AgentFuzzyMatcher(chat, temperature, nativeSchema, maxTokens));
-            var router = new PipelineRouter(
-                new DocumentPipeline(renderer, text, llm, reconciler),
-                new SpreadsheetPipeline(sheet, renderer, llm, reconciler));
+            Push(new { kind = "stage", file = job.FileName, engine = o.Engine, provider = o.Provider,
+                       model, strategy = o.Strategy.ToString().ToLowerInvariant() });
 
             var progress = new ProgressParser(Push);
             var opts = new ExtractionOptions(o.Strategy, o.Dpi, o.MaxParallel,
-                ModelCapabilities.TextChunkCharsFor(effModel, 24_000), OnProgress: progress.Handle)
+                ModelCapabilities.TextChunkCharsFor(model, 24_000), OnProgress: progress.Handle)
             {
                 OnPartialResult = (leg, r) => Push(new
                 {
@@ -322,12 +316,7 @@ public static class ServeCommand
             };
 
             var sw = Stopwatch.StartNew();
-            var result = await router.RunAsync(path, opts, CancellationToken.None);
-
-            // decompose printed questions into atomic parts + tag each for retrieval (applicant only)
-            Push(new { kind = "log", message = "decompose: splitting into atomic parts + tagging..." });
-            await new AgentRetrievalEnricher(chat, temperature, nativeSchema, maxTokens).EnrichAsync(result.Merged, CancellationToken.None);
-            result.Report.AnswerSlots = GranularityView.AtomicCount(result.Merged.Questions);
+            var result = await service.RunAsync(path, opts, CancellationToken.None);
 
             job.Result = result;
             job.Questions = GranularityView.Apply(result.Merged, o.Granularity).Questions;   // questions.json at chosen granularity
@@ -365,7 +354,9 @@ public static class ServeCommand
         private static readonly Regex TextDone = new(@"text chunk \d+/(\d+): done", RegexOptions.Compiled);
         private static readonly Regex GridTotal = new(@"grid: (\d+) sheet\(s\)", RegexOptions.Compiled);
         private static readonly Regex SheetDone = new(@"sheet '.+': done", RegexOptions.Compiled);
-        private int _vTot, _vDone, _tTot, _tDone, _gTot, _gDone;
+        private static readonly Regex DecompTotal = new(@"-> (\d+) batch\(es\)", RegexOptions.Compiled);
+        private static readonly Regex DecompDone = new(@"decompose batch \d+/(\d+): done", RegexOptions.Compiled);
+        private int _vTot, _vDone, _tTot, _tDone, _gTot, _gDone, _dTot, _dDone;
 
         public void Handle(string msg)
         {
@@ -379,6 +370,8 @@ public static class ServeCommand
                 else if ((m = TextDone.Match(msg)).Success) { _tTot = int.Parse(m.Groups[1].Value); Send("text", ++_tDone, _tTot); }
                 else if ((m = GridTotal.Match(msg)).Success) { _gTot = int.Parse(m.Groups[1].Value); Send("grid", _gDone, _gTot); }
                 else if (SheetDone.IsMatch(msg)) Send("grid", ++_gDone, _gTot);
+                else if ((m = DecompTotal.Match(msg)).Success) { _dTot = int.Parse(m.Groups[1].Value); Send("decompose", _dDone, _dTot); }
+                else if ((m = DecompDone.Match(msg)).Success) { _dTot = int.Parse(m.Groups[1].Value); Send("decompose", ++_dDone, _dTot); }
             }
         }
 
