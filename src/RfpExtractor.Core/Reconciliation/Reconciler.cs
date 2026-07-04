@@ -26,7 +26,13 @@ public static class TextNormalizer
 ///  2. Match keys are VERBATIM-FIRST: table cells match on row+column; body questions match on
 ///     normalized verbatim_source (the printed text — stable across legs) and only then on
 ///     question_text (which each leg may rephrase). Leftovers go to an optional LLM fuzzy pass.
-///  3. After matching, ALL answer targets are renumbered into one namespace and secondary-only
+///  3. Grid cells the text keys missed get a POSITIONAL pass (EQDP field finding — the vision leg
+///     re-derives the same grids but words the headers differently, so row+column keys fail and
+///     ~170 duplicate cells grafted): tables are paired across legs when at least one AXIS of
+///     headers clearly agrees (max row/column-set Jaccard ≥ 0.6, ordinal tiebreak, one-to-one),
+///     and cells then match by (row index, column index) — but ONLY when both grids have identical
+///     dimensions, so a grid the legs genuinely disagree about is left alone (grafted, as before).
+///  4. After matching, ALL answer targets are renumbered into one namespace and secondary-only
 ///     items are grafted into the merged schema — the two legs number their targets
 ///     independently, so a plain union produces target collisions and dangling schema refs.
 /// </summary>
@@ -55,6 +61,8 @@ public sealed class Reconciler : IReconciler
         pending = MatchPhase(pending, pQs, matched, mergedSubs, q => q.Source == QuestionSource.TableCell, CellKey);
         pending = MatchPhase(pending, pQs, matched, mergedSubs, eligible: null, q => TextNormalizer.Key(q.VerbatimSource));
         pending = MatchPhase(pending, pQs, matched, mergedSubs, eligible: null, q => TextNormalizer.Key(q.QuestionText));
+        // 4) positional pass for grid cells whose header texts the legs worded differently.
+        pending = MatchCellsByPosition(pending, pQs, secondary.Questions, matched, mergedSubs);
 
         // ---- optional LLM fuzzy pass over the leftovers (paraphrase duplicates) ----
         if (fuzzyMatch && _fuzzy is not null && pending.Count > 0 && Array.IndexOf(matched, false) >= 0)
@@ -255,6 +263,130 @@ public sealed class Reconciler : IReconciler
 
     private static string CellKey(Question q) =>
         TextNormalizer.Key(q.SchemaRef.Row ?? "") + "|" + TextNormalizer.Key(q.SchemaRef.Column ?? "");
+
+    /// <summary>Minimum axis-header agreement (Jaccard over normalized row OR column header sets)
+    /// to pair two grids across legs. 0.6 = "one axis is clearly the same grid axis" — validated
+    /// against the EQDP dual-leg run, where true pairs scored 0.92–1.0 and junk pairs ≤ 0.4.</summary>
+    private const double AxisAgreement = 0.6;
+
+    /// <summary>
+    /// Phase 4 — POSITIONAL matching for data-entry cells the header-text keys missed (EQDP field
+    /// finding: the vision leg re-derives the same grids but words the headers differently — e.g.
+    /// "No. of accounts" vs "Number of accounts" — so <see cref="CellKey"/> fails for every cell of
+    /// the grid and hundreds of duplicates graft). Three safety rails keep this conservative:
+    ///  - grids are paired only when one full AXIS of headers clearly agrees
+    ///    (<see cref="AxisAgreement"/>), one-to-one, best score first, document order as tiebreak;
+    ///  - cells then pair by (row index, column index) — first-appearance order over the FULL grid
+    ///    (matched cells included, so partial phase-1 matches don't skew the geometry);
+    ///  - and ONLY when both grids have identical dimensions — if the legs disagree about a grid's
+    ///    shape (extra total row, split table), it is left exactly as before: grafted for review.
+    /// A wrong absorb would silently drop a genuine vision-only answer slot, which is worse than a
+    /// duplicate — hence guards err toward keeping duplicates.
+    /// </summary>
+    private static List<Question> MatchCellsByPosition(List<Question> pending, IReadOnlyList<Question> pQs,
+        IReadOnlyList<Question> secondaryAll, bool[] matched, List<string>?[] subs)
+    {
+        // Question is a record (VALUE equality); identity comparers keep repeated identical cells distinct.
+        var pendingSet = new HashSet<Question>(pending, ReferenceEqualityComparer.Instance);
+        if (pendingSet.Count == 0) return pending;
+
+        var pTables = GroupCells(pQs);
+        var sTables = GroupCells(secondaryAll);
+        if (pTables.Count == 0 || sTables.Count == 0) return pending;
+
+        // Pair tables across legs: best axis agreement first, reading-order proximity as tiebreak.
+        var candidates = new List<(double Score, int Dist, CellTable P, CellTable S)>();
+        foreach (var pt in pTables)
+            foreach (var st in sTables)
+            {
+                var score = Math.Max(Jaccard(pt.RowKeys, st.RowKeys), Jaccard(pt.ColKeys, st.ColKeys));
+                if (score >= AxisAgreement) candidates.Add((score, Math.Abs(pt.Rank - st.Rank), pt, st));
+            }
+
+        var usedP = new HashSet<CellTable>();
+        var usedS = new HashSet<CellTable>();
+        var consumed = new HashSet<Question>(ReferenceEqualityComparer.Instance);
+        foreach (var (_, _, pt, st) in candidates
+                     .OrderByDescending(c => c.Score).ThenBy(c => c.Dist).ThenBy(c => c.P.Rank).ThenBy(c => c.S.Rank))
+        {
+            if (!usedP.Add(pt)) continue;
+            if (!usedS.Add(st)) { usedP.Remove(pt); continue; }
+
+            // Identical dimensions or hands off (a grid the legs disagree about stays grafted).
+            // Deliberately AFTER claiming the pair: a table keeps its best-scoring partner even when
+            // the dims veto matching — falling back to a worse-scoring partner instead would be
+            // exactly the kind of guess this phase must not make.
+            if (pt.RowIdx.Count != st.RowIdx.Count || pt.ColIdx.Count != st.ColIdx.Count) continue;
+
+            // FIFO per position, like MatchPhase: reading order keeps well-formed grids exact and
+            // degrades gracefully if header repeats collapse two cells onto one position.
+            var queues = new Dictionary<(int R, int C), Queue<int>>();
+            foreach (var cell in pt.Cells)
+            {
+                if (matched[cell.Idx]) continue;
+                if (!queues.TryGetValue((cell.R, cell.C), out var qu)) queues[(cell.R, cell.C)] = qu = new Queue<int>();
+                qu.Enqueue(cell.Idx);
+            }
+            foreach (var cell in st.Cells)
+            {
+                if (!pendingSet.Contains(cell.Q)) continue;
+                if (queues.TryGetValue((cell.R, cell.C), out var qu) && qu.Count > 0)
+                {
+                    var i = qu.Dequeue();
+                    matched[i] = true;
+                    subs[i] = pQs[i].SubQuestions.Union(cell.Q.SubQuestions).ToList();
+                    consumed.Add(cell.Q);
+                }
+            }
+        }
+
+        return consumed.Count == 0 ? pending : pending.Where(q => !consumed.Contains(q)).ToList();
+    }
+
+    /// <summary>One leg's data-entry grid: cells in reading order with first-appearance row/column
+    /// indices computed over the FULL grid (matched cells included — geometry must not shift when
+    /// phase 1 already absorbed part of the grid).</summary>
+    private sealed class CellTable(int rank)
+    {
+        public int Rank { get; } = rank;
+        public Dictionary<string, int> RowIdx { get; } = new();
+        public Dictionary<string, int> ColIdx { get; } = new();
+        public List<(Question Q, int Idx, int R, int C)> Cells { get; } = new();
+        public HashSet<string> RowKeys { get; } = new();   // non-empty normalized headers (for pairing)
+        public HashSet<string> ColKeys { get; } = new();
+    }
+
+    private static List<CellTable> GroupCells(IReadOnlyList<Question> questions)
+    {
+        var byTable = new Dictionary<(string SectionId, string ItemId), CellTable>();
+        var ordered = new List<CellTable>();
+        for (int i = 0; i < questions.Count; i++)
+        {
+            var q = questions[i];
+            if (q.Source != QuestionSource.TableCell) continue;
+            var key = (q.SchemaRef.SectionId, q.SchemaRef.ItemId);
+            if (!byTable.TryGetValue(key, out var t))
+            {
+                byTable[key] = t = new CellTable(ordered.Count);
+                ordered.Add(t);
+            }
+            var rk = TextNormalizer.Key(q.SchemaRef.Row ?? "");
+            var ck = TextNormalizer.Key(q.SchemaRef.Column ?? "");
+            if (!t.RowIdx.TryGetValue(rk, out var r)) t.RowIdx[rk] = r = t.RowIdx.Count;
+            if (!t.ColIdx.TryGetValue(ck, out var c)) t.ColIdx[ck] = c = t.ColIdx.Count;
+            if (rk.Length > 0) t.RowKeys.Add(rk);
+            if (ck.Length > 0) t.ColKeys.Add(ck);
+            t.Cells.Add((q, i, r, c));
+        }
+        return ordered;
+    }
+
+    private static double Jaccard(HashSet<string> a, HashSet<string> b)
+    {
+        if (a.Count == 0 || b.Count == 0) return 0;
+        var inter = a.Count(b.Contains);
+        return (double)inter / (a.Count + b.Count - inter);
+    }
 
     private static DocumentSchema RemapSchema(DocumentSchema s, Dictionary<string, string> map)
     {

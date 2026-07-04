@@ -3,6 +3,21 @@
 Newest first. Dates are when the work landed; entries before 2026-07-04 predate version control
 (the project moved to git + GitHub `RFP-AI` on 2026-07-04) and are reconstructed from the build log.
 
+## 2026-07-04 — positional grid reconciliation (phase 4)
+
+- **New reconciler phase: positional cell matching.** When the vision leg re-derives a grid but
+  words the headers differently, every row+column key fails and the whole grid used to graft as
+  duplicates. Grids are now paired across legs when one full AXIS of headers clearly agrees
+  (max row/column Jaccard ≥ 0.6, one-to-one, document-order tiebreak) and their cells matched by
+  (row index, column index) computed over the FULL grid. Three deliberate safety rails: axis
+  agreement required, best-scoring partner only (no fallback guessing), and **identical grid
+  dimensions required** — a grid the legs disagree about (extra total row, split table, the EQDP's
+  6×4-vs-1×4 case) stays grafted for review, because silently absorbing a genuine vision-only cell
+  is worse than keeping a duplicate. Replayed against the EQDP dual-leg run: the clean reworded
+  grids absorb; all ambiguous ones are refused. Cross-leg duplication remains a `--strategy=both`
+  hazard on table-heavy born-digital docs — prefer `--strategy=text` there (the low-match warning
+  still fires). +5 guard-rail tests (134 total); all 129 pre-existing tests unchanged.
+
 ## 2026-07-04 — reconciliation-quality warning for low cross-leg match
 
 - **Low reconciliation match rate now warns.** A `--strategy=both` run on the EQDP produced 575

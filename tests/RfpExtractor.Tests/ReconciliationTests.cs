@@ -499,6 +499,112 @@ public class ReconcilerTests
             => throw new InvalidOperationException("boom");
     }
 
+    // ---- phase 4: positional grid matching (EQDP field finding) ----
+
+    /// <summary>Grid with the given row/column header texts, cells in reading order.</summary>
+    private static Question[] Grid(string leg, string item, string[] rows, string[] cols,
+        Func<Question, Question>? mutate = null)
+    {
+        var qs = new List<Question>();
+        int n = 0;
+        foreach (var r in rows)
+            foreach (var c in cols)
+            {
+                var q = new Question
+                {
+                    QuestionId = $"{leg}-{item}-{++n}", AnswerTarget = $"AT-{leg}-{item}-{n}",
+                    QuestionText = $"{c} for {r}?", VerbatimSource = $"{c}/{r}",
+                    SectionPath = "S", Source = QuestionSource.TableCell,
+                    SchemaRef = new SchemaRef { SectionId = "s", ItemId = item, Row = r, Column = c },
+                };
+                qs.Add(mutate is null ? q : mutate(q));
+            }
+        return qs.ToArray();
+    }
+
+    [Fact]
+    public async Task Positional_pass_absorbs_a_regrid_whose_columns_were_reworded()
+    {
+        // EQDP failure mode: same physical grid, rows identical, every COLUMN reworded by the
+        // vision leg -> all row+column keys fail -> previously the whole grid duplicated.
+        var rows = new[] { "1 year ago", "2 years ago", "3 years ago" };
+        var p = WithSchema(Result(Grid("p", "t1", rows, new[] { "Firm AUM", "No. of accounts" })));
+        var s = Result(Grid("s", "u1", rows, new[] { "Total firm AUM (S$m)", "Number of accounts" }));
+
+        var r = await Run(p, s);
+
+        Assert.Equal(6, r.Report.AgreedCount);                 // whole grid absorbed positionally
+        Assert.Equal(0, r.Report.SecondaryOnlyCount);          // no duplicate graft
+        Assert.Equal(6, r.Report.MergedCount);
+        Assert.All(r.Merged.Questions, q => Assert.Equal(FoundBy.Both, q.FoundBy));
+    }
+
+    [Fact]
+    public async Task Positional_pass_leaves_a_fully_reworded_grid_alone()
+    {
+        // BOTH axes reworded -> no axis agreement -> no pairing -> status quo (grafted for review).
+        var p = WithSchema(Result(Grid("p", "t1", new[] { "1 year ago", "2 years ago" }, new[] { "Firm AUM", "Accounts" })));
+        var s = Result(Grid("s", "u1", new[] { "FY2025", "FY2024" }, new[] { "Assets (S$m)", "Client count" }));
+
+        var r = await Run(p, s);
+
+        Assert.Equal(0, r.Report.AgreedCount);
+        Assert.Equal(4, r.Report.SecondaryOnlyCount);          // unchanged behaviour: kept, flagged
+        Assert.Equal(8, r.Report.MergedCount);
+    }
+
+    [Fact]
+    public async Task Positional_pass_refuses_grids_with_different_dimensions()
+    {
+        // Vision saw an extra "Total" row the text leg (correctly) excluded: the axis clearly
+        // agrees (2 of 3 rows) but shapes differ -> hands off, nothing silently absorbed.
+        var p = WithSchema(Result(Grid("p", "t1", new[] { "1 year ago", "2 years ago" }, new[] { "Firm AUM", "Accounts" })));
+        var s = Result(Grid("s", "u1", new[] { "1 year ago", "2 years ago", "Total" }, new[] { "AUM (S$m)", "No. of acct" }));
+
+        var r = await Run(p, s);
+
+        Assert.Equal(0, r.Report.AgreedCount);
+        Assert.Equal(6, r.Report.SecondaryOnlyCount);          // all vision cells kept for review
+    }
+
+    [Fact]
+    public async Task Positional_pass_pairs_repeated_identical_grids_in_document_order()
+    {
+        // Per-fund repeats: two identical grids per leg (columns reworded across legs). Ordinal
+        // tiebreak must pair 1st<->1st and 2nd<->2nd — proven via the sub_questions merge, which
+        // records WHICH secondary cell each primary absorbed.
+        var rows = new[] { "1 year ago" };
+        Question Tag(Question q, string tag) => q with { SubQuestions = new List<string> { tag } };
+        var p = WithSchema(Result(
+            Grid("p", "t1", rows, new[] { "Firm AUM" }).Concat(
+            Grid("p", "t2", rows, new[] { "Firm AUM" })).ToArray()));
+        var s = Result(
+            Grid("s", "u1", rows, new[] { "AUM (S$m)" }, q => Tag(q, "fundA")).Concat(
+            Grid("s", "u2", rows, new[] { "AUM (S$m)" }, q => Tag(q, "fundB"))).ToArray());
+
+        var r = await Run(p, s);
+
+        Assert.Equal(2, r.Report.AgreedCount);
+        Assert.Contains("fundA", r.Merged.Questions[0].SubQuestions);   // 1st grid took the 1st copy
+        Assert.Contains("fundB", r.Merged.Questions[1].SubQuestions);
+    }
+
+    [Fact]
+    public async Task Positional_pass_completes_a_grid_phase_one_partially_matched()
+    {
+        // One column identical (phase 1 matches those cells), the other reworded (phase 4 must
+        // absorb the rest) — geometry is computed over the FULL grid, so indices still line up.
+        var rows = new[] { "1 year ago", "2 years ago" };
+        var p = WithSchema(Result(Grid("p", "t1", rows, new[] { "Firm AUM", "No. of accounts" })));
+        var s = Result(Grid("s", "u1", rows, new[] { "Firm AUM", "Number of accounts" }));
+
+        var r = await Run(p, s);
+
+        Assert.Equal(4, r.Report.AgreedCount);                 // 2 by header key + 2 positionally
+        Assert.Equal(0, r.Report.SecondaryOnlyCount);
+        Assert.Equal(4, r.Report.MergedCount);
+    }
+
     [Fact]
     public async Task Low_cross_leg_match_rate_warns_about_likely_duplicates()
     {
