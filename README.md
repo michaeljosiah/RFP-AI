@@ -215,7 +215,10 @@ Top-level entry (one per printed question in `hybrid`/`bundled`, one per atomic 
 `parts[]` entries: `part_id` (`Q008.2`), `answer_target` (`AT-0008-2`), `question_text`,
 `answer_type`, `retrieval`.
 
-`retrieval` tags (added by the decomposition pass; absent with `--no-decompose`):
+`retrieval` tags (added by the decomposition pass; absent with `--no-decompose`). Body questions and
+document requests get LLM-derived tags; **data-entry table cells are atomic and skip the LLM**, so
+they carry only the deterministic baseline (`expected_format` from the cell type, `category: other`,
+`requires_external_input: true`) — no per-cell `units`/`ai_comment`:
 
 | Field | Meaning |
 |---|---|

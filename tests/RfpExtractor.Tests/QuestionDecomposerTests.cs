@@ -88,30 +88,55 @@ public class QuestionDecomposerTests
     }
 
     [Fact]
-    public async Task Table_cells_are_tagged_but_never_split_even_if_the_model_returns_multiple_parts()
+    public async Task Table_cells_get_the_baseline_and_are_never_sent_to_the_llm()
     {
-        // A single grid cell whose column/row headers mention several periods — the model fans it
-        // into one part per period. A cell is ONE value: tag it, never split it (EQDP finding).
+        // A cell is ONE value: it cannot decompose, so it keeps the deterministic baseline and is
+        // never sent to the model (a table-heavy doc is ~80% cells — big token saving). A throwing
+        // chat proves it: if the cell were enriched, the retry policy would add a warning and bump
+        // the call count; skipping it leaves both untouched.
+        var chat = new FailingChat();
+        var r = new ExtractionResult
+        {
+            Questions = { Q("Q1", "What was the firm's AUM 1 year ago?", AnswerType.Currency, "Firm", QuestionSource.TableCell, Audience.Applicant) }
+        };
+
+        var warnings = await new QuestionDecomposer(chat).DecomposeAsync(r, FastOptions, CancellationToken.None);
+
+        Assert.Empty(warnings);                                        // never sent -> no failure
+        Assert.Equal(0, chat.Calls);                                   // the LLM was not called for a cell
+        var q = r.Questions[0];
+        Assert.Empty(q.Parts);
+        Assert.Equal(QuestionCategory.Other, q.Retrieval!.Category);        // deterministic baseline
+        Assert.Equal(ExpectedFormat.Value, q.Retrieval!.ExpectedFormat);    // table_cell -> value
+        Assert.True(q.Retrieval!.RequiresExternalInput);                    // safe default
+    }
+
+    [Fact]
+    public async Task Body_and_cells_mix_only_narrative_is_enriched_cells_keep_baseline()
+    {
+        // A body question + a table cell in one call: the body is decomposed, the cell is skipped
+        // (baseline only). Verifies the split-by-source targeting.
         var canned = """
             { "questions": [
               { "id": "Q1", "parts": [
-                  { "question_text": "Portfolio return for the 1-year period.", "answer_type": "percentage", "category": "performance", "units": "%", "requires_external_input": true },
-                  { "question_text": "Portfolio return for the 3-year period.", "answer_type": "percentage", "category": "performance", "units": "%", "requires_external_input": true },
-                  { "question_text": "Portfolio return for the 5-year period.", "answer_type": "percentage", "category": "performance", "units": "%", "requires_external_input": true }
-              ] }
-            ] }
+                  { "question_text": "Describe your firm.", "answer_type": "long_text", "category": "firm_profile", "requires_external_input": true },
+                  { "question_text": "State your firm's AUM.", "answer_type": "currency", "category": "firm_profile", "units": "S$ million", "requires_external_input": true }
+              ] } ] }
             """;
         var r = new ExtractionResult
         {
-            Questions = { Q("Q1", "Portfolio Return (%, SGD terms, gross) for 1/3/5-year periods.", AnswerType.Percentage, "Performance", QuestionSource.TableCell, Audience.Applicant) }
+            Questions =
+            {
+                Q("Q1", "Describe your firm and state its AUM.", AnswerType.LongText, "Firm", QuestionSource.Body, Audience.Applicant),
+                Q("Q2", "AUM 1 year ago", AnswerType.Currency, "Firm", QuestionSource.TableCell, Audience.Applicant),
+            }
         };
 
-        var warnings = await new QuestionDecomposer(new CannedChat(canned)).DecomposeAsync(r, FastOptions, CancellationToken.None);
+        await new QuestionDecomposer(new CannedChat(canned)).DecomposeAsync(r, FastOptions, CancellationToken.None);
 
-        Assert.Empty(warnings);
-        Assert.Empty(r.Questions[0].Parts);                            // forced single despite 3 returned parts
-        Assert.Equal(QuestionCategory.Performance, r.Questions[0].Retrieval!.Category);
-        Assert.Equal(ExpectedFormat.Value, r.Questions[0].Retrieval!.ExpectedFormat);   // table_cell -> value
+        Assert.Equal(2, r.Questions[0].Parts.Count);                   // body decomposed
+        Assert.Empty(r.Questions[1].Parts);                           // cell not decomposed
+        Assert.Equal(QuestionCategory.Other, r.Questions[1].Retrieval!.Category);   // cell has baseline, not the model's tag
     }
 
     [Fact]

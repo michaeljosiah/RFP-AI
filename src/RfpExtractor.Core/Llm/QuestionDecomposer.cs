@@ -37,7 +37,9 @@ public sealed record DecomposedPart
 /// A question with &gt;1 part gets its atomic breakdown in <c>Parts</c> (retrieval lives on the parts,
 /// the parent is the answer box); a single-ask question carries its own <c>Retrieval</c> and no parts.
 /// This makes the atomic breakdown DETERMINISTIC (a focused per-question task) instead of relying on
-/// the extraction model to split as it reads. Runs ONCE over the deduplicated set.
+/// the extraction model to split as it reads. Runs ONCE over the deduplicated set. Data-entry table
+/// cells are atomic by nature (one cell = one value): they get the deterministic baseline tag but
+/// are NOT sent to the LLM — on a table-heavy document that skips ~80% of the questions.
 ///
 /// Batches run CONCURRENTLY under <see cref="ExtractionOptions.MaxParallel"/> and each batch gets the
 /// same retry-×3 policy as the extraction legs (<see cref="Resilience"/>) — a transient gateway blip
@@ -61,15 +63,29 @@ public sealed class QuestionDecomposer : IQuestionDecomposer
     public async Task<IReadOnlyList<string>> DecomposeAsync(
         ExtractionResult result, ExtractionOptions options, CancellationToken ct)
     {
-        // Only applicant-facing questions are decomposed/retrieved against; internal sections are skipped.
-        var targets = result.Questions
+        // Only applicant-facing questions are tagged; internal sections are skipped.
+        var applicant = result.Questions
             .Select((q, i) => (q, i))
             .Where(x => x.q.Audience == Audience.Applicant)
             .ToList();
+        if (applicant.Count == 0) return Array.Empty<string>();
+
+        // Deterministic baseline for EVERY applicant question first (single ask, no parts, derived
+        // format) — so nothing is left without a retrieval hint even when the LLM is skipped or fails.
+        foreach (var (q, i) in applicant)
+            result.Questions[i] = q with { Retrieval = Baseline(q), Parts = new() };
+
+        // A data-entry table cell is ONE cell / ONE value: it cannot decompose, so it keeps the
+        // baseline and is NOT sent to the LLM. On a table-heavy document (e.g. the EQDP: 304 of 379
+        // questions are cells) that is ~80% of the questions, so skipping them cuts the decompose
+        // cost several-fold. Only body prompts + document requests are enriched.
+        var targets = applicant.Where(x => x.q.Source != QuestionSource.TableCell).ToList();
         if (targets.Count == 0) return Array.Empty<string>();
 
         var batches = targets.Chunk(BatchSize).ToList();
-        options.OnProgress?.Invoke($"decompose: {targets.Count} question(s) -> {batches.Count} batch(es); splitting...");
+        var skipped = applicant.Count - targets.Count;
+        options.OnProgress?.Invoke($"decompose: {targets.Count} narrative question(s) -> {batches.Count} batch(es)"
+            + (skipped > 0 ? $" (baseline-only for {skipped} table cell(s))" : "") + "; splitting...");
 
         var warnings = new ConcurrentBag<string>();
         using var sem = new SemaphoreSlim(options.MaxParallel);
@@ -80,11 +96,7 @@ public sealed class QuestionDecomposer : IQuestionDecomposer
             await sem.WaitAsync(ct);
             try
             {
-                // 1) deterministic baseline: single ask, no parts, category Other, derived format.
-                foreach (var (q, i) in batch)
-                    result.Questions[i] = q with { Retrieval = Baseline(q), Parts = new() };
-
-                // 2) LLM decomposition + tags — retried; a final failure keeps the baseline + warns.
+                // LLM decomposition + tags — retried; a final failure keeps the baseline + warns.
                 var decomp = await Resilience.TryAsync(
                     () => CallModelAsync(batch, ct),
                     $"decompose batch {b + 1}/{batches.Count}", warnings,
@@ -96,12 +108,9 @@ public sealed class QuestionDecomposer : IQuestionDecomposer
                     if (!decomp.TryGetValue(q.QuestionId, out var dq) || dq.Parts.Count == 0) continue;
                     var cur = result.Questions[i];
 
-                    // Atomic-by-nature sources are TAGGED but never SPLIT, even if the model returned
-                    // several parts:
-                    //  - a data-entry table cell is ONE cell / ONE value (the model sometimes splits it
-                    //    by the periods or sub-rows its column/row headers mention — e.g. a single
-                    //    "Portfolio Return" cell fanned into one part per 1/3/5-year period);
-                    //  - a document request / upload is one deliverable (split attempts by period/fund).
+                    // A document request / upload is one deliverable — TAG it but never SPLIT it by the
+                    // periods/funds it lists. (Table cells never reach here — they are filtered above —
+                    // but the guard keeps that invariant even if that filter is ever relaxed.)
                     var single = dq.Parts.Count == 1
                         || cur.Source == QuestionSource.TableCell
                         || cur.Source == QuestionSource.DocumentRequest

@@ -3,6 +3,16 @@
 Newest first. Dates are when the work landed; entries before 2026-07-04 predate version control
 (the project moved to git + GitHub `RFP-AI` on 2026-07-04) and are reconstructed from the build log.
 
+## 2026-07-04 — EQDP run findings: table cells no longer decomposed
+
+- **Table cells are atomic — never split, never sent to the LLM.** The EQDP run (a table-heavy
+  questionnaire: 304 of 379 questions are cells) exposed the model splitting a *single* grid cell
+  by the periods its headers mention — one "Portfolio Return" performance cell fanned into 7
+  period-parts — inflating `answer_slots` by 34 spurious atomic slots (508 → 474). Cells now keep
+  only the deterministic baseline retrieval tag and are excluded from the decomposition LLM calls
+  entirely, cutting decompose cost several-fold on table-heavy documents. Body questions and
+  document requests are unaffected. (+2 regression tests.)
+
 ## 2026-07-04 — public repo, orchestration refactor, resilient decomposition
 
 - **Moved to git + public GitHub repo (`RFP-AI`).** Confidential material is excluded by
