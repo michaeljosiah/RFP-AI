@@ -1,0 +1,28 @@
+# Build output
+bin/
+obj/
+out/
+extracted/
+*.user
+*.binlog
+
+# Machine-local configuration — real gateway URLs / endpoints / keys live here, never in git
+src/RfpExtractor.Cli/appsettings.Local.json
+
+# Confidential document corpus — real client questionnaires are NEVER committed (public repo).
+# See tests/RfpExtractor.Tests/TestData/README.md.
+tests/RfpExtractor.Tests/TestData/*.docx
+tests/RfpExtractor.Tests/TestData/*.doc
+tests/RfpExtractor.Tests/TestData/*.pdf
+tests/RfpExtractor.Tests/TestData/*.xlsx
+tests/RfpExtractor.Tests/TestData/*.xlsm
+
+# Local agent/tooling scaffolding (machine-specific; not part of the product)
+.arke/
+.opencode/
+.repos/
+
+# IDE
+.vs/
+.idea/
+*.suo

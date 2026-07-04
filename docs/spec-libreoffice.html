@@ -1,0 +1,804 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>RFP Question Extractor — LibreOffice Engine + Microsoft Agent Framework — Build Specification</title>
+<style>
+  :root { --bg:#fff; --fg:#1a1a1a; --muted:#5b6470; --line:#e3e6ea; --accent:#1d4ed8; --accent-soft:#e7edfb;
+    --code-bg:#0f172a; --code-fg:#e2e8f0; --warn-bg:#fff7ed; --warn-line:#fdba74; --ok-bg:#ecfdf5; --ok-line:#6ee7b7;
+    --info-bg:#eff6ff; --info-line:#93c5fd; }
+  * { box-sizing:border-box; } html { scroll-behavior:smooth; }
+  body { margin:0; font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif; color:var(--fg); line-height:1.6; }
+  .layout { display:grid; grid-template-columns:290px 1fr; max-width:1420px; margin:0 auto; }
+  nav.toc { position:sticky; top:0; align-self:start; height:100vh; overflow-y:auto; padding:24px 18px; border-right:1px solid var(--line); font-size:13px; }
+  nav.toc h2 { font-size:12px; text-transform:uppercase; letter-spacing:.08em; color:var(--muted); margin:18px 0 8px; }
+  nav.toc a { display:block; color:var(--fg); text-decoration:none; padding:3px 0; }
+  nav.toc a:hover { color:var(--accent); } nav.toc a.sub { padding-left:14px; color:var(--muted); }
+  main { padding:40px 56px; max-width:940px; }
+  h1 { font-size:29px; line-height:1.2; margin:0 0 6px; }
+  h2 { font-size:23px; margin:44px 0 12px; padding-bottom:6px; border-bottom:2px solid var(--accent-soft); }
+  h3 { font-size:18px; margin:28px 0 8px; }
+  h4 { font-size:14px; margin:20px 0 6px; color:var(--muted); text-transform:uppercase; letter-spacing:.05em; }
+  p, li { font-size:15px; }
+  code { font-family:"SF Mono",Consolas,"Roboto Mono",monospace; font-size:13px; background:#f1f3f5; padding:1px 5px; border-radius:4px; }
+  pre { background:var(--code-bg); color:var(--code-fg); padding:16px 18px; border-radius:8px; overflow-x:auto; font-size:12.5px; line-height:1.5; }
+  pre code { background:none; padding:0; color:inherit; font-size:inherit; }
+  .pill { display:inline-block; background:var(--accent); color:#fff; font-size:11px; font-weight:600; padding:2px 9px; border-radius:999px; vertical-align:middle; }
+  .tag { display:inline-block; background:var(--accent-soft); color:var(--accent); font-size:11px; font-weight:600; padding:2px 8px; border-radius:4px; }
+  table.grid { border-collapse:collapse; width:100%; margin:14px 0; font-size:14px; }
+  table.grid th, table.grid td { border:1px solid var(--line); padding:8px 10px; text-align:left; vertical-align:top; }
+  table.grid th { background:var(--accent-soft); color:var(--accent); }
+  .callout { border-left:4px solid; padding:12px 16px; margin:16px 0; border-radius:0 6px 6px 0; font-size:14px; }
+  .callout.warn { background:var(--warn-bg); border-color:var(--warn-line); }
+  .callout.ok { background:var(--ok-bg); border-color:var(--ok-line); }
+  .callout.info { background:var(--info-bg); border-color:var(--info-line); }
+  .lead { font-size:17px; color:var(--muted); }
+  .filetree { font-family:"SF Mono",Consolas,monospace; font-size:13px; background:#f8f9fa; padding:16px; border-radius:8px; border:1px solid var(--line); white-space:pre; overflow-x:auto; }
+  svg { max-width:100%; height:auto; }
+  footer { color:var(--muted); font-size:13px; margin-top:60px; padding-top:20px; border-top:1px solid var(--line); }
+</style>
+</head>
+<body>
+<div class="layout">
+<nav class="toc">
+  <strong>LibreOffice + Agent Framework</strong>
+  <h2>Contents</h2>
+  <a href="#overview">1. Overview &amp; Goals</a>
+  <a href="#grounding">1.1 API grounding</a>
+  <a href="#architecture">2. Architecture</a>
+  <a href="#seams" class="sub">2.x Interfaces</a>
+  <a href="#model">3. Domain Model</a>
+  <a href="#schemas">4. The Two Schemas</a>
+  <a href="#invariant" class="sub">4.3 Invariant</a>
+  <a href="#prompts">5. Prompts</a>
+  <a href="#prompt-grid" class="sub">5.4 Excel grid</a>
+  <a href="#docpipe">6. Document Pipeline</a>
+  <a href="#xlpipe">7. Excel Pipeline</a>
+  <a href="#recon">8. Reconciliation &amp; Confidence</a>
+  <a href="#maf">9. LLM via Agent Framework</a>
+  <a href="#oss">10. OSS Adapters</a>
+  <a href="#render" class="sub">10.1 Renderer</a>
+  <a href="#textextract" class="sub">10.2 Structured text</a>
+  <a href="#xl" class="sub">10.3 Spreadsheet</a>
+  <a href="#cli">11. CLI (router + wiring)</a>
+  <a href="#tool">12. As an LLM Tool</a>
+  <a href="#build">13. Build, Run &amp; Config</a>
+  <a href="#accept">14. Acceptance Criteria</a>
+  <a href="#license">15. Licensing</a>
+  <a href="#appendix">16. Appendix</a>
+</nav>
+<main>
+
+<h1>RFP Question Extractor <span class="pill">LibreOffice + Microsoft Agent Framework</span></h1>
+<p class="lead">A .NET console application that extracts every question from Word, PDF <em>and Excel</em> questionnaires
+into two linked JSON documents — a <em>structure schema</em> and a <em>flat answerable question list</em>. LLM calls
+go through <strong>Microsoft Agent Framework</strong> (model-agnostic, structured output). Rendering and document
+parsing use a fully open-source, self-hosted stack (Gotenberg/LibreOffice + Docnet.Core + Open XML SDK + ClosedXML).</p>
+
+<div class="callout ok"><strong>Same Core &amp; contract as the Telerik edition.</strong> The domain model, the two JSON
+schemas, the four prompts, the pipelines (document + Excel), reconciliation, the Microsoft Agent Framework LLM layer,
+and the LLM-tool design are <em>identical</em> to <code>spec-telerik.html</code>. Only §10 (engine adapters), §13
+(prereqs) and §15 (licensing) differ. One stable contract, two interchangeable engines.</div>
+
+<div class="callout ok"><strong>Implementation status.</strong> Built and verified. This OSS engine ships as
+<code>RfpExtractor.LibreOffice</code> in the same solution and is selectable at runtime with
+<code>--engine=libreoffice</code>. The full solution compiles with 0 warnings on .NET 10; the shared Core has 10 passing
+unit tests. Verified against the real M&amp;G questionnaire (docx → 8.3k-char markdown via Open XML SDK + 1 ground-truth
+table + 3 <strong>watermark-free</strong> pages via Gotenberg→Docnet→SkiaSharp) and a test workbook (xlsx → 6 label +
+6 empty answer cells with exact addresses via ClosedXML). The LLM legs compile against MAF 1.12.0 and need an
+<code>IChatClient</code> endpoint to run. Deviations found during the build are folded in below and flagged
+"verified by build".</div>
+
+<h2 id="overview">1. Overview &amp; Goals</h2>
+<p>Questionnaires arrive as Word (<code>.docx</code>), PDF, or Excel (<code>.xlsx</code>). We turn them into a
+concrete, answerable question list and record exactly where each answer belongs.</p>
+<ul>
+  <li><strong>Word / PDF</strong> — dual pipeline: a <em>vision leg</em> (Gotenberg→PDF→Docnet.Core→PNG→agent) and a
+  <em>structured-text leg</em> (Open XML SDK → Markdown → agent), then reconciliation.</li>
+  <li><strong>Excel</strong> — <em>grid-first</em>: read cells directly with ClosedXML (exact addresses) → agent
+  classifies labels vs answer cells; optional vision cross-check (xlsx→PDF→image via Gotenberg). Excel answers get
+  exact <code>Sheet!Cell</code> bindings — no annotation needed.</li>
+  <li><strong>Reconciliation</strong> — merge legs, tag <code>found_by</code> + confidence, route single-source items
+  to a review queue.</li>
+  <li><strong>Data residency</strong> — all rendering/parsing is self-hosted; only the LLM calls leave your network
+  (front them through your approved Azure OpenAI / gateway).</li>
+</ul>
+
+<h3 id="grounding">1.1 API grounding <span class="tag">verified</span></h3>
+<table class="grid">
+  <tr><th>Area</th><th>Verified fact</th></tr>
+  <tr><td>Microsoft Agent Framework</td><td>Package <code>Microsoft.Agents.AI</code> (preview, 1.11.x). Agent = <code>ChatClientAgent</code> over an <code>IChatClient</code>. Structured output via <code>agent.RunAsync&lt;T&gt;(...)</code> → <code>.Result</code>; schema auto-derived from <code>T</code>. Vision via <code>ChatMessage</code> with <code>TextContent</code> + <code>DataContent(bytes,"image/png")</code>. (Microsoft Learn, agent-framework.)</td></tr>
+  <tr><td>Gotenberg</td><td>MIT, self-hosted; listens on port 3000; Office→PDF route <code>POST /forms/libreoffice/convert</code> (multipart field <code>files</code>) — handles docx, xlsx, and more. Verified end-to-end.</td></tr>
+  <tr><td>Docnet.Core</td><td><code>DocLib.Instance.GetDocReader(pdf, new PageDimensions(scale))</code>; per page <code>GetPageWidth/Height</code>, <code>GetImage(new NaiveTransparencyRemover(255,255,255))</code> → BGRA bytes; <code>GetText()</code> for PDF text.</td></tr>
+  <tr><td>Open XML SDK</td><td><code>WordprocessingDocument.Open</code>; <code>Body.ChildElements</code> → <code>Paragraph</code> / <code>Table</code>; <code>ParagraphProperties.ParagraphStyleId</code>; <code>Table.Elements&lt;TableRow&gt;()</code> → <code>TableCell</code>. (MIT.)</td></tr>
+  <tr><td>ClosedXML (Excel)</td><td><code>new XLWorkbook(path)</code>; <code>wb.Worksheets</code>; <code>ws.RangeUsed()</code> → <code>IXLRange</code>; <code>ws.Cell(r,c)</code> (1-based); <code>cell.GetString()</code>, <code>cell.IsEmpty()</code>, <code>cell.Address.ColumnLetter</code>/<code>.RowNumber</code>. (MIT.)</td></tr>
+</table>
+
+<h2 id="architecture">2. Architecture</h2>
+<div class="filetree">RfpExtractor.sln
+├─ RfpExtractor.Core/            # engine-agnostic; refs Microsoft.Agents.AI + Microsoft.Extensions.AI only
+│   ├─ Models/                   # DocumentSchema, Question, ExtractionResult, WorkbookGrid, ...
+│   ├─ Abstractions/             # IDocumentRenderer, IStructuredTextExtractor, ISpreadsheetExtractor,
+│   │                            #   ILlmExtractor, IReconciler
+│   ├─ Prompts/                  # Prompts.cs (vision, text, reconciliation, excel-grid)
+│   ├─ Pipeline/                 # DocumentPipeline, SpreadsheetPipeline, PipelineRouter, ResultMerger
+│   ├─ Reconciliation/           # Reconciler.cs, TextNormalizer.cs
+│   ├─ Llm/                      # AgentLlmExtractor.cs  (Microsoft Agent Framework)
+│   └─ Validation/               # InvariantValidator.cs
+├─ RfpExtractor.LibreOffice/     # IDocumentRenderer (Gotenberg+Docnet) + IStructuredTextExtractor (OpenXML)
+│                                #   + ISpreadsheetExtractor (ClosedXML)
+├─ RfpExtractor.Cli/             # Program.cs — arg parsing + provider wiring (Azure OpenAI IChatClient)
+└─ RfpExtractor.Tests/           # xUnit — invariant + reconciliation unit tests</div>
+<div class="callout info"><strong>Why MAF lives in Core.</strong> <code>Microsoft.Agents.AI</code> and
+<code>Microsoft.Extensions.AI</code> are provider-agnostic abstractions, so they belong in Core. The concrete model
+provider (Azure OpenAI shown) is an <code>IChatClient</code> constructed in the CLI. Swapping providers never touches Core.</div>
+
+<h3 id="seams">2.x Interfaces (the seams)</h3>
+<pre><code>// RfpExtractor.Core/Abstractions/*.cs
+public sealed record PageImage(int PageNumber, byte[] PngBytes);
+public sealed record StructuredDocument(string Markdown, IReadOnlyList&lt;TableStructure&gt; Tables);
+public sealed record TableStructure(int Index, int Rows, int Columns, int PageHint);
+public sealed record WorkbookGrid(IReadOnlyList&lt;SheetGrid&gt; Sheets);
+public sealed record SheetGrid(string Name, int Index, IReadOnlyList&lt;GridCell&gt; Cells);
+public sealed record GridCell(string Address, int Row, int Column, string Text, bool IsEmpty);
+
+public interface IDocumentRenderer          // docx/pdf/xlsx -> PNG per page
+{ Task&lt;IReadOnlyList&lt;PageImage&gt;&gt; RenderToImagesAsync(string path, int dpi, CancellationToken ct); }
+public interface IStructuredTextExtractor   // docx/pdf -> markdown + table ground truth
+{ Task&lt;StructuredDocument&gt; ExtractAsync(string path, CancellationToken ct); }
+public interface ISpreadsheetExtractor      // xlsx -> exact cell grid
+{ Task&lt;WorkbookGrid&gt; ExtractAsync(string path, CancellationToken ct); }
+public interface ILlmExtractor {
+    Task&lt;ExtractionResult&gt; ExtractFromImageAsync(PageImage page, CancellationToken ct);
+    Task&lt;ExtractionResult&gt; ExtractFromTextAsync(string markdown, int? pageHint, CancellationToken ct);
+    Task&lt;ExtractionResult&gt; ExtractFromGridAsync(string sheetGridJson, CancellationToken ct); }
+public interface IReconciler
+{ ReconciledResult Reconcile(ExtractionResult primary, ExtractionResult secondary, IReadOnlyList&lt;TableStructure&gt; gt); }</code></pre>
+
+<h2 id="model">3. Domain Model</h2>
+<p>Identical to the Telerik edition. Records with <code>System.Text.Json</code>; enums as <code>snake_case</code>.
+MAF's <code>RunAsync&lt;T&gt;</code> auto-derives the JSON schema from these records (§9).</p>
+<pre><code>// RfpExtractor.Core/Models/*.cs
+public enum ItemType { OpenQuestion, DocumentRequest, Table, YesNo, Instruction }
+public enum AnswerType { Text, LongText, Number, Currency, Percentage, Date, YesNo, DocumentUpload }
+public enum QuestionSource { Body, TableCell, DocumentRequest }
+public enum FoundBy { Vision, Text, Both }
+public enum Confidence { High, Medium, Low }
+
+public sealed record MetadataField(string Label, string Value);
+public sealed record DocumentSchema {
+    public List&lt;MetadataField&gt; Metadata { get; init; } = new();
+    public List&lt;Section&gt; Sections { get; init; } = new(); public string? Notes { get; init; } }
+public sealed record Section {
+    public required string Id { get; init; } public required string Name { get; init; }
+    public string? Subsection { get; init; } public int? Page { get; init; }
+    public List&lt;Item&gt; Items { get; init; } = new(); }
+public sealed record Item {
+    public required string Id { get; init; } public required ItemType Type { get; init; }
+    public required string Verbatim { get; init; } public string? AnswerTarget { get; init; }
+    public AnswerType? AnswerType { get; init; } public bool Truncated { get; init; } public bool Unreadable { get; init; }
+    public TableSpec? Table { get; init; } }
+public sealed record TableSpec {
+    public string Classification { get; init; } = "data_entry"; public string? IntroVerbatim { get; init; }
+    public List&lt;string&gt; ColumnHeaders { get; init; } = new(); public List&lt;string&gt; RowHeaders { get; init; } = new();
+    public List&lt;TableCell&gt; Cells { get; init; } = new(); }
+public sealed record TableCell {
+    public required string AnswerTarget { get; init; } public required string Row { get; init; }
+    public required string Column { get; init; } public AnswerType AnswerType { get; init; } = AnswerType.Text; }
+
+public sealed record SchemaRef(string SectionId, string ItemId, string? Row, string? Column, int? Page);
+public sealed record Binding {
+    public required string Kind { get; init; } public string? Tag { get; init; } public string? Sheet { get; init; }
+    public string? Address { get; init; } public string? Name { get; init; } public int? Page { get; init; }
+    public double? X { get; init; } public double? Y { get; init; } public double? W { get; init; } public double? H { get; init; } }
+public sealed record Question {
+    public required string QuestionId { get; init; } public required string AnswerTarget { get; init; }
+    public required string QuestionText { get; init; } public required string VerbatimSource { get; init; }
+    public List&lt;string&gt; SubQuestions { get; init; } = new(); public AnswerType AnswerType { get; init; } = AnswerType.Text;
+    public required string SectionPath { get; init; } public QuestionSource Source { get; init; }
+    public required SchemaRef SchemaRef { get; init; } public Binding? Binding { get; init; }
+    public FoundBy FoundBy { get; init; } = FoundBy.Both; public Confidence Confidence { get; init; } = Confidence.High;
+    public bool NeedsReview { get; init; } }
+
+public sealed record ExtractionResult {
+    public DocumentSchema DocumentSchema { get; init; } = new(); public List&lt;Question&gt; Questions { get; init; } = new(); }
+public sealed record ReconciledResult {
+    public ExtractionResult Merged { get; init; } = new(); public List&lt;Question&gt; ReviewQueue { get; init; } = new();
+    public ReconciliationReport Report { get; init; } = new();
+    public static ReconciledResult FromSingle(ExtractionResult r) =&gt;
+        new() { Merged = r, Report = new ReconciliationReport { MergedCount = r.Questions.Count } }; }
+public sealed record ReconciliationReport {
+    public int PrimaryCount { get; set; } public int SecondaryCount { get; set; } public int MergedCount { get; set; }
+    public int AgreedCount { get; set; } public int PrimaryOnlyCount { get; set; } public int SecondaryOnlyCount { get; set; }
+    public List&lt;string&gt; Warnings { get; init; } = new(); }</code></pre>
+<pre><code>// RfpExtractor.Core/Json/Json.cs
+public static class Json {
+    public static readonly System.Text.Json.JsonSerializerOptions Options = Build();
+    private static System.Text.Json.JsonSerializerOptions Build() {
+        var o = new System.Text.Json.JsonSerializerOptions {
+            PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.SnakeCaseLower, WriteIndented = true,
+            DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull };
+        o.Converters.Add(new System.Text.Json.Serialization.JsonStringEnumConverter(
+            System.Text.Json.JsonNamingPolicy.SnakeCaseLower));
+        return o; } }</code></pre>
+
+<h2 id="schemas">4. The Two Schemas</h2>
+<p>The wire contract. With MAF you do not hand-author these — <code>RunAsync&lt;T&gt;</code> derives the schema from
+<code>ExtractionResult</code> (§9). Documented here so you can validate the output.</p>
+<h3>4.1 <code>document_schema</code></h3>
+<pre><code>{ "metadata":[{"label":"Manager Name","value":"M&amp;G"}],
+  "sections":[
+    {"id":"sec-business","name":"Business","page":1,"items":[
+      {"id":"business-aum","type":"table","verbatim":"AUM split","answer_target":null,
+       "truncated":false,"unreadable":false,
+       "table":{"classification":"data_entry","intro_verbatim":"Outline the firm's AUM",
+         "column_headers":["Firm AUM","Strategy Assets","Fund Assets"],
+         "row_headers":["Current","1 Year ago"],
+         "cells":[{"answer_target":"AT-0010","row":"Current","column":"Firm AUM","answer_type":"currency"}]}}]}],
+  "notes":null }</code></pre>
+<h3>4.2 <code>questions</code></h3>
+<pre><code>[ { "question_id":"Q010","answer_target":"AT-0010",
+    "question_text":"What is the firm's AUM currently?",
+    "verbatim_source":"Firm AUM / Current","sub_questions":[],
+    "answer_type":"currency","section_path":"Business","source":"table_cell",
+    "schema_ref":{"section_id":"sec-business","item_id":"business-aum","row":"Current","column":"Firm AUM","page":1},
+    "binding":{"kind":"cell","sheet":"AUM","address":"B3"},
+    "found_by":"both","confidence":"high","needs_review":false } ]</code></pre>
+
+<h3 id="invariant">4.3 The 1:1 invariant</h3>
+<div class="callout ok"><strong>Invariant.</strong> The <code>answer_target</code> set in <code>document_schema</code>
+equals the set referenced by <code>questions</code>. No orphans, no duplicates. Validate after each extraction and after
+reconciliation.</div>
+<pre><code>// RfpExtractor.Core/Validation/InvariantValidator.cs
+public static class InvariantValidator {
+    public static IReadOnlyList&lt;string&gt; Validate(ExtractionResult r) {
+        var errors = new List&lt;string&gt;(); var schema = new HashSet&lt;string&gt;();
+        foreach (var s in r.DocumentSchema.Sections)
+        foreach (var it in s.Items) {
+            if (it.Type == ItemType.Table &amp;&amp; it.Table is not null)
+                foreach (var c in it.Table.Cells) Add(schema, c.AnswerTarget, errors);
+            else if (it.AnswerTarget is { } t) Add(schema, t, errors); }
+        var q = new HashSet&lt;string&gt;();
+        foreach (var it in r.Questions) {
+            if (!q.Add(it.AnswerTarget)) errors.Add($"Duplicate question target: {it.AnswerTarget}");
+            if (!schema.Contains(it.AnswerTarget)) errors.Add($"Question {it.QuestionId} -> missing target {it.AnswerTarget}"); }
+        foreach (var t in schema) if (!q.Contains(t)) errors.Add($"Schema target {t} has no question");
+        return errors;
+        static void Add(HashSet&lt;string&gt; set, string t, List&lt;string&gt; e){ if(!set.Add(t)) e.Add($"Duplicate schema target: {t}"); } } }</code></pre>
+
+<h2 id="prompts">5. Prompts</h2>
+<p>String constants in <code>Prompts.cs</code>; each becomes an agent's <strong>instructions</strong> (§9). Structured
+output forces the schema.</p>
+<h3>5.1 Vision</h3>
+<pre><code>You are a precise document-extraction engine for RFP/questionnaire automation.
+You are given ONE image of a single page. Return a single object with "document_schema"
+and "questions" as structured output. Do not add commentary.
+
+CORE
+- Mint a unique "answer_target" ("AT-0001", ... in reading order) for EVERY answerable
+  location: each open question, each document/data request line, each yes/no, and each
+  fillable data-entry table cell.
+- INVARIANT: every answer_target appears exactly once in document_schema AND exactly once
+  in questions. No orphans, no duplicates.
+
+RULES
+1. VERBATIM in the schema; questions may NORMALISE phrasing but keep the original in
+   "verbatim_source". Never answer anything.
+2. "layout" tables (label column + question column) are NOT emitted as tables - extract
+   content as items, use label cells as section names. "data_entry" grids ARE emitted:
+   column_headers, row_headers, intro_verbatim, one cell per fillable cell (own
+   answer_target,row,column,answer_type) AND one question per cell phrased standalone from
+   context+column+row. e.g. "What was the firm's AUM 1 year ago?"
+3. MULTI-PART sharing one box -> one question + "sub_questions"; separate boxes -> separate targets.
+4. answer_type: text|long_text|number|currency|percentage|date|yes_no|document_upload.
+5. SECTIONS from headings/bands; section+subsection+page; slug ids; reading order.
+6. "truncated"/"unreadable" flags; exclude headers/footers/page-numbers/watermarks/legal;
+   put document-identifying fields in metadata.</code></pre>
+<h3>5.2 Structured text</h3>
+<pre><code>You are a precise document-extraction engine. Input: the FULL document as Markdown (tables
+preserved; headings as '#'). Return one object with "document_schema" and "questions".
+
+[... identical CORE and RULES 1-6 as Vision ...]
+
+TEXT MODE: markdown tables are literal - header row = column_headers; leftmost body column =
+row header; every EMPTY body cell is a fillable data_entry cell (own answer_target +
+question). A body cell with text is context, not an answer cell.</code></pre>
+<h3>5.3 Reconciliation</h3>
+<pre><code>You merge two extractions of the SAME questionnaire. Input JSON has "primary" (questions[])
+and "secondary" (questions[]). Return one "questions" array as structured output.
+1. Same if normalised meaning matches OR same cell (row+column under same section). Merge.
+2. On merge PREFER primary's verbatim_source + answer_target + binding; pick cleaner
+   question_text; union sub_questions.
+3. found_by = both | (single source). confidence = high(both) | medium(single-source cell) |
+   low. needs_review = (found_by != both). Never drop single-source questions.
+4. Preserve fields; keep answer_target stable. Never invent questions.</code></pre>
+<h3 id="prompt-grid">5.4 Excel grid</h3>
+<pre><code>You are a precise spreadsheet-extraction engine. Input: ONE worksheet as JSON
+{ "sheet":&lt;name&gt;, "cells":[ {address,text} ... ] } where answer cells have text = "".
+Return one object with "document_schema" and "questions".
+1. Classify LABEL cells (question text, row/column headers, section banners) vs ANSWER cells
+   (empty cells in the used range under a header and/or beside a row label).
+2. For EACH answer cell emit a schema entry (data_entry cell when in a header x row grid,
+   else open_question) with a unique answer_target AND one question. question_text is a
+   fluent standalone question from section + column header + row label.
+3. binding = { "kind":"cell", "sheet":&lt;name&gt;, "address":&lt;A1&gt; } on the question; set
+   schema_ref.row/column to the label texts.
+4. answer_type from header wording; verbatim_source = exact labels.
+5. INVARIANT: one answer_target per answer cell, one question each. Ignore styling-only /
+   out-of-range cells.</code></pre>
+
+<h2 id="docpipe">6. Document Pipeline (Word / PDF)</h2>
+<pre><code>// RfpExtractor.Core/Pipeline/DocumentPipeline.cs
+public enum Strategy { Vision, Text, Both }
+public sealed record ExtractionOptions(Strategy Strategy = Strategy.Both, int Dpi = 200, int MaxParallel = 4);
+
+public sealed class DocumentPipeline {
+    private readonly IDocumentRenderer _renderer; private readonly IStructuredTextExtractor _text;
+    private readonly ILlmExtractor _llm; private readonly IReconciler _reconciler;
+    public DocumentPipeline(IDocumentRenderer r, IStructuredTextExtractor t, ILlmExtractor l, IReconciler rec)
+    { _renderer=r; _text=t; _llm=l; _reconciler=rec; }
+    public async Task&lt;ReconciledResult&gt; RunAsync(string path, ExtractionOptions opts, CancellationToken ct) {
+        ExtractionResult vision = new();
+        if (opts.Strategy is Strategy.Vision or Strategy.Both) {
+            var pages = await _renderer.RenderToImagesAsync(path, opts.Dpi, ct);
+            var sem = new SemaphoreSlim(opts.MaxParallel);
+            var per = await Task.WhenAll(pages.Select(async p =&gt; { await sem.WaitAsync(ct);
+                try { return await _llm.ExtractFromImageAsync(p, ct); } finally { sem.Release(); } }));
+            vision = ResultMerger.StitchPages(per); }
+        ExtractionResult text = new(); StructuredDocument? structured = null;
+        if (opts.Strategy is Strategy.Text or Strategy.Both) {
+            structured = await _text.ExtractAsync(path, ct);
+            if (!string.IsNullOrWhiteSpace(structured.Markdown))
+                text = await _llm.ExtractFromTextAsync(structured.Markdown, null, ct); }
+        var gt = structured?.Tables ?? Array.Empty&lt;TableStructure&gt;();
+        var result = opts.Strategy switch {
+            Strategy.Vision =&gt; ReconciledResult.FromSingle(vision),
+            Strategy.Text   =&gt; ReconciledResult.FromSingle(text),
+            _               =&gt; _reconciler.Reconcile(primary: text, secondary: vision, gt) };
+        foreach (var e in InvariantValidator.Validate(result.Merged)) result.Report.Warnings.Add(e);
+        return result; } }</code></pre>
+<div class="callout info"><strong>ResultMerger.StitchPages</strong> concatenates per-page schemas, renumbers
+<code>AT-####</code>/<code>Q###</code> continuously, and joins <code>truncated:true</code> items to the next page's
+first item. Mechanical loop.</div>
+
+<h2 id="xlpipe">7. Excel Pipeline</h2>
+<p>The <strong>grid leg is authoritative</strong> (exact cell addresses, no OCR); vision is an optional cross-check.
+Each sheet is a "page". Fill-back bindings are exact (<code>Sheet!Cell</code>), so Excel needs no annotation.</p>
+<pre><code>// RfpExtractor.Core/Pipeline/SpreadsheetPipeline.cs
+public sealed class SpreadsheetPipeline {
+    private readonly ISpreadsheetExtractor _grid; private readonly IDocumentRenderer _renderer;
+    private readonly ILlmExtractor _llm; private readonly IReconciler _reconciler;
+    public SpreadsheetPipeline(ISpreadsheetExtractor g, IDocumentRenderer r, ILlmExtractor l, IReconciler rec)
+    { _grid=g; _renderer=r; _llm=l; _reconciler=rec; }
+    public async Task&lt;ReconciledResult&gt; RunAsync(string path, ExtractionOptions opts, CancellationToken ct) {
+        var wb = await _grid.ExtractAsync(path, ct);
+        var perSheet = new List&lt;ExtractionResult&gt;();
+        foreach (var sheet in wb.Sheets) {
+            var payload = System.Text.Json.JsonSerializer.Serialize(new {
+                sheet = sheet.Name, cells = sheet.Cells.Select(c =&gt; new { c.Address, c.Text }) }, Json.Options);
+            perSheet.Add(await _llm.ExtractFromGridAsync(payload, ct)); }
+        var gridResult = ResultMerger.StitchPages(perSheet.ToArray());
+        if (opts.Strategy != Strategy.Both) {
+            var single = ReconciledResult.FromSingle(gridResult);
+            foreach (var e in InvariantValidator.Validate(single.Merged)) single.Report.Warnings.Add(e);
+            return single; }
+        var pages = await _renderer.RenderToImagesAsync(path, opts.Dpi, ct);        // xlsx -> pdf -> image via Gotenberg
+        var per = await Task.WhenAll(pages.Select(p =&gt; _llm.ExtractFromImageAsync(p, ct)));
+        var vision = ResultMerger.StitchPages(per);
+        var result = _reconciler.Reconcile(primary: gridResult, secondary: vision, Array.Empty&lt;TableStructure&gt;());
+        foreach (var e in InvariantValidator.Validate(result.Merged)) result.Report.Warnings.Add(e);
+        return result; } }
+
+// RfpExtractor.Core/Pipeline/PipelineRouter.cs
+public sealed class PipelineRouter {
+    private readonly DocumentPipeline _doc; private readonly SpreadsheetPipeline _sheet;
+    public PipelineRouter(DocumentPipeline doc, SpreadsheetPipeline sheet) { _doc=doc; _sheet=sheet; }
+    public Task&lt;ReconciledResult&gt; RunAsync(string path, ExtractionOptions opts, CancellationToken ct) {
+        var ext = Path.GetExtension(path).ToLowerInvariant();
+        return ext is ".xlsx" or ".xlsm" or ".xls" ? _sheet.RunAsync(path, opts, ct) : _doc.RunAsync(path, opts, ct); } }</code></pre>
+<div class="callout info"><strong>Default for Excel is grid-only</strong> (<code>Strategy.Text</code> ⇒ grid). Add
+<code>--strategy=both</code> for the vision cross-check. Cap cells per agent call for very large sheets and
+<code>log</code> the truncation.</div>
+
+<h2 id="recon">8. Reconciliation &amp; Confidence</h2>
+<div class="callout ok"><strong>v2 — rebuilt after field testing (shared Core).</strong> Reconciliation now uses
+one-to-one ordered matching (same-leg repeats are distinct answer slots, never collapsed), verbatim-first keys
+(cells by row+column, then <code>verbatim_source</code>, then <code>question_text</code>), an optional LLM fuzzy pass
+(<code>AgentFuzzyMatcher</code>, default ON, <code>--no-fuzzy</code>), and post-merge target renumbering with
+secondary-only schema grafting so the 1:1 invariant holds. Full rationale: <code>spec-telerik.html §8</code> —
+identical implementation for both engines.</div>
+<table class="grid">
+  <tr><th>Situation</th><th>found_by</th><th>confidence</th><th>needs_review</th></tr>
+  <tr><td>Both legs matched</td><td>both</td><td>high</td><td>false</td></tr>
+  <tr><td>One leg, table/grid cell backed by structure</td><td>text/vision</td><td>medium</td><td>true</td></tr>
+  <tr><td>One leg, free-text question</td><td>text/vision</td><td>low</td><td>true</td></tr>
+  <tr><td>Ground-truth grid has N cells, a leg emitted &lt; N</td><td>—</td><td>—</td><td>warning: undercount</td></tr>
+</table>
+<pre><code>// RfpExtractor.Core/Reconciliation/*.cs
+public static class TextNormalizer {
+    public static string Key(string s) =&gt; System.Text.RegularExpressions.Regex.Replace(
+        (s ?? "").ToLowerInvariant().Trim(), @"[\s\p{P}]+", " ").Trim();
+    public static string CellKey(SchemaRef r) =&gt; $"{r.SectionId}|{r.Row?.ToLowerInvariant()}|{r.Column?.ToLowerInvariant()}"; }
+
+public sealed class Reconciler : IReconciler {
+    public ReconciledResult Reconcile(ExtractionResult primary, ExtractionResult secondary, IReadOnlyList&lt;TableStructure&gt; groundTruth) {
+        var merged = new Dictionary&lt;string, Question&gt;();
+        var report = new ReconciliationReport { PrimaryCount = primary.Questions.Count, SecondaryCount = secondary.Questions.Count };
+        void Ingest(IEnumerable&lt;Question&gt; qs, bool isPrimary) {
+            foreach (var q in qs) {
+                var key = q.Source == QuestionSource.TableCell ? "cell:" + TextNormalizer.CellKey(q.SchemaRef)
+                                                               : "txt:"  + TextNormalizer.Key(q.QuestionText);
+                if (merged.TryGetValue(key, out var e))
+                    merged[key] = e with { FoundBy = FoundBy.Both, Confidence = Confidence.High, NeedsReview = false,
+                        SubQuestions = e.SubQuestions.Union(q.SubQuestions).ToList() };
+                else
+                    merged[key] = q with { FoundBy = isPrimary ? FoundBy.Text : FoundBy.Vision,
+                        Confidence = q.Source == QuestionSource.TableCell ? Confidence.Medium : Confidence.Low,
+                        NeedsReview = true }; } }
+        Ingest(primary.Questions, true); Ingest(secondary.Questions, false);
+        var cellCount = merged.Values.Count(q =&gt; q.Source == QuestionSource.TableCell);
+        var expected = groundTruth.Sum(t =&gt; Math.Max(0, (t.Rows - 1) * (t.Columns - 1)));
+        if (expected &gt; 0 &amp;&amp; cellCount &lt; expected)
+            report.Warnings.Add($"Table cell undercount: found {cellCount}, grid implies ~{expected}.");
+        var all = merged.Values.ToList();
+        report.MergedCount = all.Count; report.AgreedCount = all.Count(q =&gt; q.FoundBy == FoundBy.Both);
+        report.PrimaryOnlyCount = all.Count(q =&gt; q.FoundBy == FoundBy.Text);
+        report.SecondaryOnlyCount = all.Count(q =&gt; q.FoundBy == FoundBy.Vision);
+        var schema = primary.DocumentSchema.Sections.Count &gt; 0 ? primary.DocumentSchema : secondary.DocumentSchema;
+        return new ReconciledResult { Merged = new ExtractionResult { DocumentSchema = schema, Questions = all },
+            ReviewQueue = all.Where(q =&gt; q.NeedsReview).ToList(), Report = report }; } }</code></pre>
+
+<h2 id="maf">9. LLM via Microsoft Agent Framework</h2>
+<p>All LLM work goes through MAF agents; Core references only the abstraction packages. One
+<code>AgentLlmExtractor</code> builds three agents (one per prompt) and uses structured output
+(<code>RunAsync&lt;ExtractionResult&gt;</code>). Vision is a <code>DataContent</code> image block. <em>This class is
+identical to the Telerik edition — the LLM layer is engine-independent.</em></p>
+<pre><code>&lt;!-- RfpExtractor.Core.csproj --&gt;
+&lt;PackageReference Include="Microsoft.Agents.AI" Version="1.*-*" /&gt;   &lt;!-- resolves 1.12.0 (stable) --&gt;
+&lt;PackageReference Include="Microsoft.Extensions.AI" Version="10.*" /&gt; &lt;!-- MAF 1.12 requires &gt;= 10.6.0 --&gt;</code></pre>
+<pre><code>// RfpExtractor.Core/Llm/AgentLlmExtractor.cs
+using Microsoft.Agents.AI; using Microsoft.Extensions.AI;
+using RfpExtractor.Core.Abstractions; using RfpExtractor.Core.Models; using RfpExtractor.Core.Prompts;
+
+public sealed class AgentLlmExtractor : ILlmExtractor {
+    private readonly AIAgent _vision, _text, _grid;
+    public AgentLlmExtractor(IChatClient chat) {
+        // ChatClientAgentOptions has NO Instructions property (MAF 1.12) -&gt; set it on ChatOptions.
+        AIAgent Make(string name, string instructions) =&gt; new ChatClientAgent(chat,
+            new ChatClientAgentOptions { Name = name,
+                ChatOptions = new ChatOptions { Instructions = instructions, Temperature = 0f } });
+        _vision = Make("vision-extractor", Prompts.Vision);
+        _text   = Make("text-extractor",   Prompts.Text);
+        _grid   = Make("grid-extractor",   Prompts.Grid);
+    }
+    public async Task&lt;ExtractionResult&gt; ExtractFromImageAsync(PageImage page, CancellationToken ct) {
+        var message = new ChatMessage(ChatRole.User, new AIContent[] {
+            new TextContent($"This is page {page.PageNumber}. Extract per the rules."),
+            new DataContent(page.PngBytes, "image/png") });
+        var response = await _vision.RunAsync&lt;ExtractionResult&gt;(
+            message, serializerOptions: Json.Options, cancellationToken: ct);
+        return response.Result; }
+    public async Task&lt;ExtractionResult&gt; ExtractFromTextAsync(string markdown, int? pageHint, CancellationToken ct) {
+        var response = await _text.RunAsync&lt;ExtractionResult&gt;(
+            markdown, serializerOptions: Json.Options, cancellationToken: ct);
+        return response.Result; }
+    public async Task&lt;ExtractionResult&gt; ExtractFromGridAsync(string sheetGridJson, CancellationToken ct) {
+        var response = await _grid.RunAsync&lt;ExtractionResult&gt;(
+            sheetGridJson, serializerOptions: Json.Options, cancellationToken: ct);
+        return response.Result; } }</code></pre>
+<div class="callout ok"><strong>Verified by build (MAF 1.12.0 + Extensions.AI 10.6.0, .NET 10).</strong> Compiles as
+written. <code>ChatClientAgentOptions</code> has <code>Name</code> + <code>ChatOptions</code> but <strong>no</strong>
+<code>Instructions</code> (put it on <code>ChatOptions.Instructions</code>, alongside <code>Temperature</code>).
+<code>RunAsync&lt;T&gt;(message, serializerOptions:, cancellationToken:)</code> returns a response with <code>.Result</code>
+(use <code>var</code>). Passing <code>Json.Options</code> yields snake_case string enums matching this document. Records
+use <code>init</code> defaults (no <code>required</code>) for reliable structured-output deserialization. Requires a
+vision + structured-output model (e.g. Azure OpenAI <code>gpt-4o</code>).</div>
+
+<div class="callout ok"><strong>GenCore timeout resilience — implemented (shared Core).</strong> The extractor now
+STREAMS every call (<code>RunStreamingAsync</code> + explicit <code>ChatOptions.ResponseFormat</code> schema, assembled
+before deserializing) to defeat gateway <em>idle</em> timeouts; <em>total-duration</em> caps are handled by bounding
+every request — page-per-call vision, a <strong>chunked text leg</strong> (<code>MarkdownChunker</code>, block-boundary
+splits, tables never broken, default 24k chars), and per-sheet grid calls with a <code>MaxCellsPerSheet</code> cap.
+Each call retries ×3 with backoff and a permanently failed page/chunk/sheet becomes a report warning instead of
+aborting the run. Vision + text legs run concurrently under a shared <code>SemaphoreSlim</code>
+(<code>--max-parallel</code>); payloads use compact JSON. Full detail: <code>spec-telerik.html §9.1</code> — the Core
+implementation is identical for both engines.</div>
+<div class="callout warn"><strong>OSS-engine specific:</strong> Docnet's <code>DocLib.Instance</code> is a process-wide
+singleton and PDFium is not thread-safe. With the legs now concurrent, the adapters must NOT dispose the instance
+per call and must serialize PDFium work through a shared lock (<code>Pdfium.Lock</code> — implemented in
+<code>LibreOfficeRenderer.Rasterize</code> and <code>OpenXmlTextExtractor.ExtractPdfText</code>).</div>
+
+<h2 id="oss">10. OSS Adapters <span class="tag">engine-specific</span></h2>
+<pre><code>&lt;!-- RfpExtractor.LibreOffice.csproj --&gt;
+&lt;ItemGroup&gt;
+  &lt;ProjectReference Include="..\RfpExtractor.Core\RfpExtractor.Core.csproj" /&gt;
+  &lt;PackageReference Include="Docnet.Core" Version="2.6.0" /&gt;
+  &lt;PackageReference Include="SkiaSharp" Version="2.88.*" /&gt;
+  &lt;PackageReference Include="SkiaSharp.NativeAssets.Win32" Version="2.88.*" /&gt;
+  &lt;PackageReference Include="DocumentFormat.OpenXml" Version="3.*" /&gt;
+  &lt;PackageReference Include="ClosedXML" Version="0.104.*" /&gt;
+&lt;/ItemGroup&gt;</code></pre>
+<div class="callout info">All packages are on nuget.org — no private feed. On Linux/macOS swap the SkiaSharp native
+assets package for the matching RID. Everything is cross-platform.</div>
+
+<h3 id="render">10.1 Renderer — docx/pdf/xlsx → PNG (Gotenberg + Docnet.Core + SkiaSharp)</h3>
+<pre><code>// RfpExtractor.LibreOffice/LibreOfficeRenderer.cs
+using System.Net.Http.Headers; using System.Runtime.InteropServices;
+using Docnet.Core; using Docnet.Core.Converters; using Docnet.Core.Models; using SkiaSharp;
+
+public sealed class LibreOfficeRenderer : IDocumentRenderer {
+    private readonly HttpClient _http; private readonly string _gotenbergUrl;
+    public LibreOfficeRenderer(HttpClient http, string gotenbergUrl) { _http = http; _gotenbergUrl = gotenbergUrl; }
+
+    public async Task&lt;IReadOnlyList&lt;PageImage&gt;&gt; RenderToImagesAsync(string path, int dpi, CancellationToken ct) {
+        // Gotenberg's LibreOffice route converts docx AND xlsx (and more) to PDF.
+        byte[] pdf = path.EndsWith(".pdf", StringComparison.OrdinalIgnoreCase)
+            ? await File.ReadAllBytesAsync(path, ct)
+            : await ConvertViaGotenbergAsync(path, ct);
+        return Rasterize(pdf, dpi); }
+
+    private async Task&lt;byte[]&gt; ConvertViaGotenbergAsync(string path, CancellationToken ct) {
+        var endpoint = _gotenbergUrl.TrimEnd('/') + "/forms/libreoffice/convert";
+        using var form = new MultipartFormDataContent();
+        var content = new ByteArrayContent(await File.ReadAllBytesAsync(path, ct));
+        content.Headers.ContentType = new MediaTypeHeaderValue("application/octet-stream");
+        form.Add(content, "files", Path.GetFileName(path));
+        using var resp = await _http.PostAsync(endpoint, form, ct);
+        resp.EnsureSuccessStatusCode();
+        return await resp.Content.ReadAsByteArrayAsync(ct); }
+
+    private static IReadOnlyList&lt;PageImage&gt; Rasterize(byte[] pdf, int dpi) {
+        using var lib = DocLib.Instance;
+        using var reader = lib.GetDocReader(pdf, new PageDimensions(dpi / 72.0));
+        var pages = new List&lt;PageImage&gt;();
+        for (int i = 0; i &lt; reader.GetPageCount(); i++) {
+            using var pr = reader.GetPageReader(i);
+            int w = pr.GetPageWidth(), h = pr.GetPageHeight();
+            byte[] bgra = pr.GetImage(new NaiveTransparencyRemover(255, 255, 255));
+            using var bmp = new SKBitmap(w, h, SKColorType.Bgra8888, SKAlphaType.Premul);
+            Marshal.Copy(bgra, 0, bmp.GetPixels(), bgra.Length);
+            using var img = SKImage.FromBitmap(bmp);
+            using var data = img.Encode(SKEncodedImageFormat.Png, 100);
+            pages.Add(new PageImage(i + 1, data.ToArray())); }
+        return pages; } }</code></pre>
+
+<h3 id="textextract">10.2 Structured text — docx → Markdown + ground truth (Open XML SDK)</h3>
+<div class="callout ok"><strong>Upgraded: recursive, nested-table aware (field finding).</strong> Questionnaires often
+nest data-entry grids inside a big layout table; a flat walk loses them. The extractor now recurses: a table that
+contains tables is layout (short label cells → <code>##</code> headings, cell content rendered recursively), leaf
+tables become markdown pipe tables and count toward the ground truth. This extractor is now used by <strong>both</strong>
+engines for docx text (Telerik's markdown export flattens nested tables).</div>
+<pre><code>// RfpExtractor.LibreOffice/OpenXmlTextExtractor.cs
+using System.Text; using DocumentFormat.OpenXml.Packaging; using DocumentFormat.OpenXml.Wordprocessing;
+using Docnet.Core; using Docnet.Core.Models;
+
+public sealed class OpenXmlTextExtractor : IStructuredTextExtractor {
+    public Task&lt;StructuredDocument&gt; ExtractAsync(string path, CancellationToken ct) {
+        if (path.EndsWith(".pdf", StringComparison.OrdinalIgnoreCase)) return Task.FromResult(ExtractPdfText(path));
+        using var doc = WordprocessingDocument.Open(path, false);
+        var body = doc.MainDocumentPart!.Document.Body!;
+        var sb = new StringBuilder(); var tables = new List&lt;TableStructure&gt;(); int tIdx = 0;
+        foreach (var el in body.ChildElements) {
+            if (el is Paragraph p) {
+                var text = p.InnerText;
+                if (string.IsNullOrWhiteSpace(text)) { sb.AppendLine(); continue; }
+                var style = p.ParagraphProperties?.ParagraphStyleId?.Val?.Value ?? "";
+                if (style.StartsWith("Heading", StringComparison.OrdinalIgnoreCase)) {
+                    var level = int.TryParse(new string(style.Where(char.IsDigit).ToArray()), out var lv) ? lv : 1;
+                    sb.AppendLine($"{new string('#', Math.Clamp(level, 1, 6))} {text}"); }
+                else sb.AppendLine(text);
+                sb.AppendLine(); }
+            else if (el is Table tbl) {
+                var rows = tbl.Elements&lt;TableRow&gt;().ToList();
+                int cols = rows.Count == 0 ? 0 : rows.Max(r =&gt; r.Elements&lt;TableCell&gt;().Count());
+                tables.Add(new TableStructure(tIdx++, rows.Count, cols, 0));
+                for (int r = 0; r &lt; rows.Count; r++) {
+                    var cells = rows[r].Elements&lt;TableCell&gt;().Select(c =&gt; c.InnerText.Replace("|", "\\|").Trim()).ToList();
+                    while (cells.Count &lt; cols) cells.Add("");
+                    sb.AppendLine("| " + string.Join(" | ", cells) + " |");
+                    if (r == 0) sb.AppendLine("| " + string.Join(" | ", Enumerable.Repeat("---", cols)) + " |"); }
+                sb.AppendLine(); } }
+        return Task.FromResult(new StructuredDocument(sb.ToString(), tables)); }
+
+    private static StructuredDocument ExtractPdfText(string path) {
+        using var lib = DocLib.Instance;
+        using var reader = lib.GetDocReader(path, new PageDimensions(1.0));
+        var sb = new StringBuilder();
+        for (int i = 0; i &lt; reader.GetPageCount(); i++) {
+            using var pr = reader.GetPageReader(i); sb.AppendLine(pr.GetText()); sb.AppendLine(); }
+        return new StructuredDocument(sb.ToString(), Array.Empty&lt;TableStructure&gt;()); } }</code></pre>
+
+<h3 id="xl">10.3 Spreadsheet — xlsx → exact cell grid (ClosedXML)</h3>
+<pre><code>// RfpExtractor.LibreOffice/ClosedXmlSpreadsheetExtractor.cs
+using ClosedXML.Excel;
+
+public sealed class ClosedXmlSpreadsheetExtractor : ISpreadsheetExtractor {
+    public Task&lt;WorkbookGrid&gt; ExtractAsync(string path, CancellationToken ct) {
+        using var wb = new XLWorkbook(path);
+        var sheets = new List&lt;SheetGrid&gt;(); int si = 0;
+        foreach (var ws in wb.Worksheets) {
+            var used = ws.RangeUsed();                          // IXLRange, null if the sheet is empty
+            var cells = new List&lt;GridCell&gt;();
+            if (used != null) {
+                var a = used.RangeAddress;
+                for (int r = a.FirstAddress.RowNumber; r &lt;= a.LastAddress.RowNumber; r++)      // 1-based
+                for (int c = a.FirstAddress.ColumnNumber; c &lt;= a.LastAddress.ColumnNumber; c++) {
+                    var cell = ws.Cell(r, c);
+                    string text = cell.GetString().Trim();
+                    cells.Add(new GridCell($"{cell.Address.ColumnLetter}{cell.Address.RowNumber}",
+                        r - 1, c - 1, text, cell.IsEmpty())); } }
+            sheets.Add(new SheetGrid(ws.Name, si++, cells)); }
+        return Task.FromResult(new WorkbookGrid(sheets)); } }</code></pre>
+<div class="callout warn"><strong>Merged-cell nuance.</strong> ClosedXML reports a merged region's value on its anchor
+cell; other cells in the merge read empty. If your questionnaires merge header cells heavily, expand
+<code>ws.MergedRanges</code> and repeat the anchor's value across the region before building the grid, so header labels
+line up with the answer cells beneath them.</div>
+
+<h2 id="cli">11. CLI (router + provider wiring)</h2>
+<pre><code>&lt;!-- RfpExtractor.Cli.csproj --&gt;
+&lt;PackageReference Include="Azure.AI.OpenAI" Version="2.*" /&gt;
+&lt;PackageReference Include="Azure.Identity" Version="1.*" /&gt;
+&lt;PackageReference Include="Microsoft.Extensions.AI.OpenAI" Version="9.*-*" /&gt;</code></pre>
+<pre><code>// RfpExtractor.Cli/Program.cs
+using Azure.AI.OpenAI; using Azure.Identity; using Microsoft.Extensions.AI;
+using RfpExtractor.Core.Abstractions; using RfpExtractor.Core.Pipeline;
+using RfpExtractor.Core.Llm; using RfpExtractor.Core.Reconciliation; using RfpExtractor.LibreOffice;
+
+var file = args.FirstOrDefault(a =&gt; !a.StartsWith("--"));
+string Get(string k, string d) =&gt; args.FirstOrDefault(a =&gt; a.StartsWith($"--{k}="))?.Split('=',2)[1] ?? d;
+if (file is null) { Console.WriteLine("Usage: rfpx &lt;file.docx|pdf|xlsx&gt; [--strategy=both|vision|text] [--dpi=200] [--out=DIR] [--deployment=gpt-4o]"); return 1; }
+
+var strategy   = Enum.Parse&lt;Strategy&gt;(Get("strategy","both"), true);
+var dpi        = int.Parse(Get("dpi","200"));
+var outDir     = Get("out", Path.Combine(Path.GetDirectoryName(Path.GetFullPath(file))!, "extracted"));
+var deployment = Get("deployment","gpt-4o");
+var endpoint   = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT") ?? throw new InvalidOperationException("Set AZURE_OPENAI_ENDPOINT.");
+var gotenberg  = Environment.GetEnvironmentVariable("GOTENBERG_URL") ?? "http://localhost:3000";
+Directory.CreateDirectory(outDir);
+using var httpDoc = new HttpClient { Timeout = TimeSpan.FromMinutes(5) };
+
+IChatClient chat = new AzureOpenAIClient(new Uri(endpoint), new DefaultAzureCredential())
+    .GetChatClient(deployment).AsIChatClient();
+
+ILlmExtractor llm = new AgentLlmExtractor(chat);
+IReconciler reconciler = new Reconciler();
+var renderer = new LibreOfficeRenderer(httpDoc, gotenberg);
+var doc   = new DocumentPipeline(renderer, new OpenXmlTextExtractor(), llm, reconciler);
+var sheet = new SpreadsheetPipeline(new ClosedXmlSpreadsheetExtractor(), renderer, llm, reconciler);
+var router = new PipelineRouter(doc, sheet);
+
+var result = await router.RunAsync(file, new ExtractionOptions(strategy, dpi), CancellationToken.None);
+void Write(string name, object o) =&gt; File.WriteAllText(Path.Combine(outDir, name),
+    System.Text.Json.JsonSerializer.Serialize(o, Json.Options));
+Write("document_schema.json", result.Merged.DocumentSchema);
+Write("questions.json",       result.Merged.Questions);
+Write("review_queue.json",    result.ReviewQueue);
+Write("reconciliation_report.json", result.Report);
+Console.WriteLine($"Merged {result.Report.MergedCount} questions ({result.Report.AgreedCount} agreed, {result.ReviewQueue.Count} to review) -> {outDir}");
+return 0;</code></pre>
+<div class="callout info"><strong>Other providers.</strong> Swap the <code>IChatClient</code> line for OpenAI, Anthropic
+(MAF Anthropic provider), or Azure AI Foundry. Core only sees <code>IChatClient</code>/<code>AIAgent</code>.</div>
+<div class="callout ok"><strong>GenCore gateway (M&amp;G) — implemented, default provider.</strong> GenCore is an
+OpenAI-v1-compatible gateway. Build the <code>IChatClient</code> with the OpenAI SDK against
+<code>{BaseUri}/openai/v1</code>, authenticated by an <code>api-key</code> header plus <code>model_engine</code> /
+<code>user_email</code> / <code>application_name="smartdocs"</code> / <code>classifier_version="v1.1"</code> (strip
+<code>Authorization</code>) — see the identical GenCore section in <code>spec-telerik.html §11</code>. Selected with
+<code>--provider=gencore</code> (default); API key from env var <code>EnterpriseGenCoreApiKey</code>. This engine
+choice (<code>libreoffice</code>) and the provider choice (<code>gencore</code>) are orthogonal — mix freely.</div>
+
+<div class="callout ok"><strong>Monitoring UI — <code>rfpx serve</code> (implemented, shared CLI).</strong> Same
+monitor as the Telerik edition: animated launcher with environment checks (incl. Gotenberg health for this engine and
+a live LLM ping), then realtime SSE progress + streamed questions via <code>ExtractionOptions.OnPartialResult</code>,
+downloads plus server-side <strong>save to disk</strong>. Providers: <code>gencore</code> (default),
+<code>azure</code>, <code>openai</code> (env <code>OPENAI_API_KEY</code> — quick local testing). Run with
+<code>rfpx serve [--port=5177] [--provider=...] [--no-browser]</code>.</div>
+
+<h2 id="tool">12. Designing as an LLM Tool</h2>
+<pre><code>// RfpExtractor.Core/ExtractionService.cs
+public sealed class ExtractionService {
+    private readonly PipelineRouter _router;
+    public ExtractionService(PipelineRouter router) { _router = router; }
+    public async Task&lt;ExtractionResult&gt; ExtractAsync(string filePath, Strategy strategy = Strategy.Both,
+                                                     int dpi = 200, CancellationToken ct = default)
+        =&gt; (await _router.RunAsync(filePath, new ExtractionOptions(strategy, dpi), ct)).Merged; }
+
+// Expose to an agent as an AIFunction (Microsoft.Extensions.AI):
+AIFunction extractTool = AIFunctionFactory.Create(
+    new ExtractionService(router).ExtractAsync,
+    name: "extract_rfp_questions",
+    description: "Extract all questions from a Word, PDF or Excel questionnaire into a schema + flat question list.");</code></pre>
+<div class="callout info"><strong>Tool-safe design.</strong> Stateless; <code>Temperature 0</code>; bounded (page/cell caps
++ token budget); Core returns the object and never writes files; cancellable. Wrapping the pipeline as an
+<code>AIFunction</code> is a one-liner via <code>AIFunctionFactory.Create</code>, so the same Core powers the CLI and an
+agent tool.</div>
+
+<h2 id="build">13. Build, Run &amp; Config</h2>
+<pre><code># prerequisites: .NET 10 SDK; Docker; Azure OpenAI (gpt-4o) reachable
+docker run -d --name gotenberg -p 3000:3000 gotenberg/gotenberg:8      # self-hosted; docs stay on your network
+setx AZURE_OPENAI_ENDPOINT "https://YOUR-RESOURCE.openai.azure.com/"
+az login
+
+dotnet restore        # Microsoft.Agents.AI is prerelease -> allow prerelease
+dotnet build -c Release
+dotnet run --project RfpExtractor.Cli -c Release -- "C:\docs\questionnaire.docx" --strategy=both
+dotnet run --project RfpExtractor.Cli -c Release -- "C:\docs\questionnaire.xlsx"                  # grid pipeline
+dotnet run --project RfpExtractor.Cli -c Release -- "C:\docs\questionnaire.xlsx" --strategy=both  # + vision</code></pre>
+<table class="grid">
+  <tr><th>Setting</th><th>Where</th><th>Default</th></tr>
+  <tr><td>Azure OpenAI endpoint / auth</td><td><code>AZURE_OPENAI_ENDPOINT</code> + <code>DefaultAzureCredential</code></td><td>required</td></tr>
+  <tr><td>Deployment</td><td><code>--deployment=</code></td><td><code>gpt-4o</code></td></tr>
+  <tr><td>Gotenberg endpoint</td><td><code>GOTENBERG_URL</code></td><td><code>http://localhost:3000</code></td></tr>
+  <tr><td>Strategy / DPI</td><td><code>--strategy=</code> / <code>--dpi=</code></td><td>both / 200</td></tr>
+  <tr><td>Concurrent LLM calls</td><td><code>--max-parallel=</code> (tune to GenCore quota)</td><td>4</td></tr>
+</table>
+<div class="callout info"><strong>No-Docker alternative.</strong> Install LibreOffice and replace
+<code>ConvertViaGotenbergAsync</code> with a <code>Process</code> call to
+<code>soffice --headless --convert-to pdf --outdir ... file</code> (throwaway <code>-env:UserInstallation</code>
+profile). Downstream is unchanged; LibreOffice converts both docx and xlsx.</div>
+
+<h2 id="accept">14. Acceptance Criteria</h2>
+<ol>
+  <li>docx, pdf, and xlsx inputs each produce the four JSON outputs.</li>
+  <li>Word/PDF data-entry cells and Excel answer cells each become a natural-language question; Excel questions carry
+  <code>binding.kind="cell"</code> with correct <code>sheet</code> + <code>address</code>.</li>
+  <li>The 1:1 invariant holds (or errors surface in report warnings).</li>
+  <li>Every question carries <code>found_by</code>/<code>confidence</code>/<code>needs_review</code>; single-source items
+  are in the review queue.</li>
+  <li>MAF structured output deserializes into <code>ExtractionResult</code> with no manual parsing.</li>
+  <li>Router selects spreadsheet pipeline for <code>.xlsx</code>; scanned PDFs degrade to vision-only.</li>
+  <li>Unit tests: invariant, reconciliation dedup (text + cell), undercount warning.</li>
+</ol>
+
+<h2 id="license">15. Licensing</h2>
+<p>Everything except the model calls is permissively licensed and free at any company size — no eligibility gates, no
+royalties, nothing copyleft reaching your source.</p>
+<table class="grid">
+  <tr><th>Component</th><th>License</th><th>Notes for M&amp;G</th></tr>
+  <tr><td>Microsoft Agent Framework / Extensions.AI</td><td>MIT</td><td>Free at any scale.</td></tr>
+  <tr><td>Azure OpenAI (model calls)</td><td>Azure consumption</td><td>Pay-per-token on your Azure agreement; data stays in your tenant/region.</td></tr>
+  <tr><td>Gotenberg</td><td>MIT</td><td>Self-hosted; no linking concern; documents stay on your network.</td></tr>
+  <tr><td>LibreOffice (in the image)</td><td>MPL 2.0</td><td>Free; obligations only if you redistribute modified binaries.</td></tr>
+  <tr><td>Docnet.Core / PDFium</td><td>MIT / BSD-3</td><td>Free; retain notices.</td></tr>
+  <tr><td>SkiaSharp</td><td>MIT</td><td>Free; cross-platform PNG.</td></tr>
+  <tr><td>DocumentFormat.OpenXml</td><td>MIT</td><td>Free; DOCX parsing.</td></tr>
+  <tr><td>ClosedXML</td><td>MIT</td><td>Free; XLSX parsing.</td></tr>
+</table>
+<div class="callout info"><strong>Enterprise checklist.</strong> Pin the Gotenberg image by digest and scan it; don't
+rebrand Gotenberg/LibreOffice. Only the model calls leave your network — route them through your approved Azure OpenAI
+resource / gateway.</div>
+
+<h2 id="appendix">16. Appendix</h2>
+<h4>A. Reflection probe — confirm a library API before coding against it</h4>
+<pre><code># PowerShell — dump public types/members matching a pattern, resolving dependencies from the NuGet cache
+$base = "$env:USERPROFILE\.nuget\packages"
+$dirs = Get-ChildItem $base -Directory | ? { $_.Name -like 'documentformat.*' -or $_.Name -like 'docnet.*' -or $_.Name -like 'closedxml*' -or $_.Name -like 'skiasharp*' } |
+  % { Get-ChildItem $_.FullName -Recurse -Directory | ? { $_.Name -like 'net*' } } | Select -Expand FullName -Unique
+[AppDomain]::CurrentDomain.add_AssemblyResolve({ param($s,$e)
+  $n=($e.Name -split ',')[0]; foreach($d in $script:dirs){ $p=Join-Path $d "$n.dll"; if(Test-Path $p){ try{return [Reflection.Assembly]::LoadFrom($p)}catch{} } }; $null })
+$asm = [Reflection.Assembly]::LoadFrom("&lt;path-to.dll&gt;")
+try { $t = $asm.GetExportedTypes() } catch [Reflection.ReflectionTypeLoadException] { $t = $_.Exception.Types | ? { $_ } }
+$t | ? { $_.Name -like '*Workbook*' } | % { $_.FullName }</code></pre>
+
+<h4>B. Fill-back (phase 2)</h4>
+<table class="grid">
+  <tr><th>Format</th><th>Anchor</th><th>OSS API</th></tr>
+  <tr><td>Word</td><td>Content control (SDT) by tag; or table cell by index</td><td>Open XML SDK</td></tr>
+  <tr><td>Excel</td><td><code>Sheet!Cell</code> from the question's <code>binding</code></td><td>ClosedXML: <code>ws.Cell(address).Value = v; wb.Save()</code></td></tr>
+  <tr><td>PDF</td><td>AcroForm fields (limited in OSS)</td><td>keep answers in Word/Excel, render final PDF via Gotenberg</td></tr>
+</table>
+<p>Add <code>IAnswerFiller.FillAsync(templatePath, IReadOnlyList&lt;(string answerTarget, string value)&gt; answers, outPath)</code>
+to Core with an OSS implementation. Excel is fully deterministic via cell-address bindings; Word uses content controls
+added once per template.</p>
+
+<footer>
+RFP Question Extractor — LibreOffice + Microsoft Agent Framework build specification. Pair document:
+<code>spec-telerik.html</code> (identical Core/MAF/schemas/prompts/pipelines; commercial rendering engine with richer
+fill-back). APIs grounded against current package docs (June 2026); re-verify member names against the exact versions
+you install before shipping.
+</footer>
+
+</main>
+</div>
+</body>
+</html>

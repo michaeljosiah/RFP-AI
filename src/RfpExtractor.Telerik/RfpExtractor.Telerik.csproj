@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <LangVersion>latest</LangVersion>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\RfpExtractor.Core\RfpExtractor.Core.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Telerik Document Processing (from the local DevCraft 'dpl' source in nuget.config) -->
+    <PackageReference Include="Telerik.Documents.Flow" Version="2026.2.519" />
+    <PackageReference Include="Telerik.Documents.Flow.FormatProviders.Pdf" Version="2026.2.519" />
+    <PackageReference Include="Telerik.Documents.Fixed" Version="2026.2.519" />
+    <PackageReference Include="Telerik.Documents.Fixed.FormatProviders.Image.Skia" Version="2026.2.519" />
+    <PackageReference Include="Telerik.Documents.Spreadsheet" Version="2026.2.519" />
+    <PackageReference Include="Telerik.Documents.Spreadsheet.FormatProviders.OpenXml" Version="2026.2.519" />
+    <PackageReference Include="Telerik.Documents.Spreadsheet.FormatProviders.Pdf" Version="2026.2.519" />
+    <PackageReference Include="Telerik.Licensing" Version="1.*" />
+  </ItemGroup>
+
+</Project>

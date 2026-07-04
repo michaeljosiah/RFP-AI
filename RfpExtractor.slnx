@@ -1,0 +1,11 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/RfpExtractor.Cli/RfpExtractor.Cli.csproj" />
+    <Project Path="src/RfpExtractor.Core/RfpExtractor.Core.csproj" />
+    <Project Path="src/RfpExtractor.LibreOffice/RfpExtractor.LibreOffice.csproj" />
+    <Project Path="src/RfpExtractor.Telerik/RfpExtractor.Telerik.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/RfpExtractor.Tests/RfpExtractor.Tests.csproj" />
+  </Folder>
+</Solution>

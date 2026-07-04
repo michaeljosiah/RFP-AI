@@ -1,0 +1,44 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <LangVersion>latest</LangVersion>
+    <AssemblyName>rfpx</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\RfpExtractor.Core\RfpExtractor.Core.csproj" />
+    <ProjectReference Include="..\RfpExtractor.Telerik\RfpExtractor.Telerik.csproj" />
+    <ProjectReference Include="..\RfpExtractor.LibreOffice\RfpExtractor.LibreOffice.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Hosts the "rfpx serve" monitoring UI (minimal API + SSE). -->
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Model providers as IChatClient: GenCore (OpenAI-compatible gateway) or Azure OpenAI direct. -->
+    <PackageReference Include="OpenAI" Version="2.*" />
+    <PackageReference Include="Azure.AI.OpenAI" Version="2.*" />
+    <PackageReference Include="Azure.Identity" Version="1.*" />
+    <PackageReference Include="Microsoft.Extensions.AI.OpenAI" Version="10.*-*" />
+    <!-- Anthropic Claude direct (api.anthropic.com) as an IChatClient provider. -->
+    <PackageReference Include="Anthropic" Version="12.*" />
+    <!-- (Configuration Json/EnvironmentVariables come via the AspNetCore framework reference.) -->
+    <!-- Telerik licensing runs in the ENTRY assembly; must be referenced here, not only in the class library. -->
+    <PackageReference Include="Telerik.Licensing" Version="1.*" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Content Include="appsettings.json" CopyToOutputDirectory="PreserveNewest" />
+    <!-- Machine-local overrides (gitignored): real gateway URLs / endpoints / keys. -->
+    <Content Include="appsettings.Local.json" CopyToOutputDirectory="PreserveNewest" Condition="Exists('appsettings.Local.json')" />
+    <!-- Geist webfonts served locally by "rfpx serve" (self-contained; no CDN). -->
+    <Content Include="wwwroot\**" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+</Project>
