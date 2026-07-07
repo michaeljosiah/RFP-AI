@@ -3,6 +3,21 @@
 Newest first. Dates are when the work landed; entries before 2026-07-04 predate version control
 (the project moved to git + GitHub `RFP-AI` on 2026-07-04) and are reconstructed from the build log.
 
+## 2026-07-07 — deterministic colour-cell enumeration (Excel DDQ extraction works)
+
+- **Colour-coded spreadsheets now extract completely and deterministically.** An LLM does the small,
+  reliable task — classify which fill colours mark answers (`DetectAnswerColoursAsync` + the
+  `GridColours` prompt, fed a per-sheet histogram + samples + any workbook legend) — and then
+  `ColourGridBuilder` enumerates in code: **one question per answer-coloured cell**, phrased from the
+  row's question text + column header, schema synthesized 1:1. This closes the gap the pure-LLM path
+  couldn't: LLMs won't exhaustively list hundreds of near-identical cells.
+- **Result on the Allianz DDQ: 382/382 answer cells** (254 green manual + 128 yellow dropdown across
+  columns I/J/K), READ ME correctly skipped (legend swatches filtered by a per-colour count floor),
+  0 warnings, real DDQ question text per cell, differentiated by a short column-header suffix. Up
+  from 1 → 12 → 24 across the earlier iterations.
+- Plain (uncoloured) grids keep the LLM row-band-chunk enumeration; per-sheet the pipeline picks the
+  path automatically. Grid progress is per-sheet. +3 tests (139 total).
+
 ## 2026-07-07 — colour-aware grid extraction (foundation) + questions-only grid output
 
 - **Cell fill colour is now captured** (`GridCell.Fill`, normalized RRGGBB) by both spreadsheet

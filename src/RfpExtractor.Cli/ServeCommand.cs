@@ -352,8 +352,8 @@ public static class ServeCommand
         private static readonly Regex VisionDone = new(@"vision page \d+: done", RegexOptions.Compiled);
         private static readonly Regex TextTotal = new(@"-> (\d+) chunk\(s\)", RegexOptions.Compiled);
         private static readonly Regex TextDone = new(@"text chunk \d+/(\d+): done", RegexOptions.Compiled);
-        private static readonly Regex GridTotal = new(@"grid: (\d+) chunk\(s\)", RegexOptions.Compiled);
-        private static readonly Regex SheetDone = new(@"grid chunk \d+/\d+ .*: done", RegexOptions.Compiled);
+        private static readonly Regex GridTotal = new(@"grid: (\d+) sheet\(s\)", RegexOptions.Compiled);
+        private static readonly Regex SheetDone = new(@"grid sheet \d+/\d+ .*: done", RegexOptions.Compiled);
         private static readonly Regex DecompTotal = new(@"-> (\d+) batch\(es\)", RegexOptions.Compiled);
         private static readonly Regex DecompDone = new(@"decompose batch \d+/(\d+): done", RegexOptions.Compiled);
         private int _vTot, _vDone, _tTot, _tDone, _gTot, _gDone, _dTot, _dDone;

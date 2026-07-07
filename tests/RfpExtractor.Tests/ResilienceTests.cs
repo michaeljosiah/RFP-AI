@@ -100,6 +100,22 @@ public class PipelineResilienceTests
             GridPayloads.Add(sheetGridJson);
             return Task.FromResult(OneQuestion("grid"));
         }
+
+        /// <summary>No colours by default -> the plain-grid (LLM chunk) path, as these tests expect.</summary>
+        public Task<IReadOnlyList<AnswerColour>> DetectAnswerColoursAsync(string colourProfileJson, CancellationToken ct) =>
+            Task.FromResult<IReadOnlyList<AnswerColour>>(Array.Empty<AnswerColour>());
+    }
+
+    /// <summary>Reports the given answer colours; counts (and refuses) LLM grid-enumeration calls.</summary>
+    private sealed class ColouredGridLlm(params AnswerColour[] colours) : ILlmExtractor
+    {
+        public int GridCalls;
+        public Task<ExtractionResult> ExtractFromImageAsync(PageImage page, CancellationToken ct) => throw new NotSupportedException();
+        public Task<ExtractionResult> ExtractFromTextAsync(string markdown, int? pageHint, CancellationToken ct) => throw new NotSupportedException();
+        public Task<ExtractionResult> ExtractFromGridAsync(string sheetGridJson, CancellationToken ct)
+        { Interlocked.Increment(ref GridCalls); return Task.FromResult(new ExtractionResult()); }
+        public Task<IReadOnlyList<AnswerColour>> DetectAnswerColoursAsync(string colourProfileJson, CancellationToken ct) =>
+            Task.FromResult<IReadOnlyList<AnswerColour>>(colours);
     }
 
     private static ExtractionResult OneQuestion(string key) => new()
@@ -148,6 +164,55 @@ public class PipelineResilienceTests
 
         Assert.Equal(3, llm.TextCalls);
         Assert.Equal(3, result.Merged.Questions.Count);          // stitched with unique targets
+        Assert.Empty(result.Report.Warnings);
+    }
+
+    [Fact]
+    public void Colour_enumeration_emits_one_question_per_coloured_cell()
+    {
+        // A = question text, B = green (manual, empty), C = yellow (dropdown, pre-filled); + header row.
+        var cells = new List<GridCell>
+        {
+            new("A1", 0, 0, "Question", false), new("B1", 0, 1, "Comments", false), new("C1", 0, 2, "Status", false),
+        };
+        for (int r = 1; r <= 3; r++)
+        {
+            cells.Add(new GridCell($"A{r + 1}", r, 0, $"Does the firm do thing {r}?", false));
+            cells.Add(new GridCell($"B{r + 1}", r, 1, "", true, "E2EFDA"));
+            cells.Add(new GridCell($"C{r + 1}", r, 2, "Yes", false, "FFFFCC"));
+        }
+        var colours = new[] { new AnswerColour("E2EFDA", AnswerType.LongText), new AnswerColour("FFFFCC", AnswerType.YesNo) };
+
+        var result = Core.Pipeline.ColourGridBuilder.Enumerate(new SheetGrid("DDQ", 0, cells), colours);
+
+        Assert.Equal(6, result.Questions.Count);                        // 3 rows x 2 answer colours
+        Assert.Empty(Core.Validation.InvariantValidator.Validate(result));   // schema synthesized 1:1
+        Assert.All(result.Questions, x => Assert.Equal(QuestionSource.TableCell, x.Source));
+        var green = result.Questions.First(x => x.Binding!.Address == "B2");
+        Assert.Equal(AnswerType.LongText, green.AnswerType);
+        Assert.Contains("Does the firm do thing 1?", green.QuestionText);
+        Assert.Contains("Comments", green.QuestionText);               // column header appended
+        var yellow = result.Questions.First(x => x.Binding!.Address == "C2");
+        Assert.Equal(AnswerType.YesNo, yellow.AnswerType);             // pre-filled cell still an answer
+    }
+
+    [Fact]
+    public async Task Colour_coded_sheet_enumerates_deterministically_and_skips_the_llm_grid_call()
+    {
+        var cells = new List<GridCell> { new("A1", 0, 0, "Question", false), new("B1", 0, 1, "Response", false) };
+        for (int r = 1; r <= 10; r++)
+        {
+            cells.Add(new GridCell($"A{r + 1}", r, 0, $"Question {r}?", false));
+            cells.Add(new GridCell($"B{r + 1}", r, 1, "", true, "E2EFDA"));
+        }
+        var llm = new ColouredGridLlm(new AnswerColour("E2EFDA", AnswerType.Text));
+        var pipeline = new SpreadsheetPipeline(new FakeGrid(new SheetGrid("S", 0, cells)),
+                                               new FakeRenderer(0), llm, new Reconciler());
+
+        var result = await pipeline.RunAsync("wb.xlsx", FastOptions(Strategy.Text), CancellationToken.None);
+
+        Assert.Equal(10, result.Merged.Questions.Count);   // one per green cell, enumerated in code
+        Assert.Equal(0, llm.GridCalls);                    // the LLM grid-enumeration call was NOT used
         Assert.Empty(result.Report.Warnings);
     }
 

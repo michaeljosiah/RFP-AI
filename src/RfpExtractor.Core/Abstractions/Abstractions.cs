@@ -35,12 +35,20 @@ public interface ISpreadsheetExtractor
     Task<WorkbookGrid> ExtractAsync(string path, CancellationToken ct);
 }
 
-/// <summary>The three LLM extraction modes, all via Microsoft Agent Framework.</summary>
+/// <summary>An answer-marking fill colour on a spreadsheet and the answer type its cells expect.</summary>
+public sealed record AnswerColour(string Fill, AnswerType AnswerType);
+
+/// <summary>The LLM extraction modes, all via Microsoft Agent Framework.</summary>
 public interface ILlmExtractor
 {
     Task<ExtractionResult> ExtractFromImageAsync(PageImage page, CancellationToken ct);
     Task<ExtractionResult> ExtractFromTextAsync(string markdown, int? pageHint, CancellationToken ct);
     Task<ExtractionResult> ExtractFromGridAsync(string sheetGridJson, CancellationToken ct);
+
+    /// <summary>Classify a sheet's fill colours to find which mark respondent answer cells — a small,
+    /// reliable task. Code then DETERMINISTICALLY emits one question per coloured cell (LLMs won't
+    /// exhaustively enumerate hundreds of near-identical cells). Empty list = not colour-coded.</summary>
+    Task<IReadOnlyList<AnswerColour>> DetectAnswerColoursAsync(string colourProfileJson, CancellationToken ct);
 }
 
 public interface IReconciler

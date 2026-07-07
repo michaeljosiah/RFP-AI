@@ -146,6 +146,29 @@ public static class Prompts
         7. Return exactly one object per input id and never invent ids.
         """;
 
+    public static readonly string GridColours = """
+        You classify the FILL COLOURS of a spreadsheet questionnaire to decide which mark the cells a
+        RESPONDENT fills in (the answers). Input JSON:
+        { "sheet": <name>,
+          "legend": [ <colour-key line> ... ],   // colour-key text found in the workbook (may be empty)
+          "fills": [ {fill, count, empty, sample_values:[...], sample_row_questions:[...]} ... ] }
+        Return { "answer_colours": [ {fill, answer_type} ] } — the fills whose cells the respondent completes.
+
+        1. An ANSWER colour marks many cells a respondent fills: a light highlight that is either mostly
+           EMPTY (manual entry) or holds a drop-down / default value, sitting beside question text
+           (see sample_row_questions). Include BOTH the manual and the drop-down colours.
+        2. EXCLUDE (do NOT return): auto-generated/computed colours (cells almost all NON-empty holding
+           calculated values), header/banner colours (dark, on heading rows), and any colour confined to
+           an "assessor" / "for office use" / "internal" area.
+        3. Prefer the "legend" when present, e.g. "Green cells must be filled manually" and "Yellow cells
+           must be selected from the drop-down" -> BOTH are answer colours; "Gray cells will be generated
+           automatically" and "…filled by the assessor" -> NOT answers. Match legend colour names to the
+           closest fill in "fills".
+        4. answer_type per colour, inferred from sample_values: yes_no | text | long_text | number |
+           currency | percentage | date | document_upload.
+        5. Return ONLY answer colours. If the sheet is not colour-coded for input, return an empty list.
+        """;
+
     public static readonly string FuzzyMatch = """
         You match duplicate questions between two independent extractions of the SAME questionnaire
         (deterministic matching already ran; you only see the leftovers). Input JSON:

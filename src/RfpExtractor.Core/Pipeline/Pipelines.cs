@@ -212,31 +212,44 @@ public sealed class SpreadsheetPipeline
         using var sem = new SemaphoreSlim(opts.MaxParallel);
 
         var wb = await _grid.ExtractAsync(path, ct);
+        opts.OnProgress?.Invoke($"grid: {wb.Sheets.Count} sheet(s); extracting...");
+        var legend = ColourGridBuilder.FindLegend(wb);
 
-        // Split each sheet into row-band chunks (the Excel analogue of text chunking) so a large
-        // grid's response can't truncate. Fan the chunks out in parallel like vision pages.
-        var payloadsBySheet = wb.Sheets.Select(s => (s.Name, Payloads: BuildSheetPayloads(s, opts, warnings))).ToList();
-        var totalChunks = payloadsBySheet.Sum(x => x.Payloads.Count);
-        var chunks = new List<(string Label, string Payload)>();
-        int ci = 0;
-        foreach (var (name, payloads) in payloadsBySheet)
-            foreach (var p in payloads)
-                chunks.Add(($"grid chunk {++ci}/{totalChunks} (sheet '{name}')", p));
-        opts.OnProgress?.Invoke($"grid: {totalChunks} chunk(s) across {wb.Sheets.Count} sheet(s); extracting...");
-
-        var perChunk = await Task.WhenAll(chunks.Select(async c =>
+        // Each sheet takes ONE of two paths:
+        //  - COLOUR-CODED: an LLM classifies which fills mark answers (a tiny, reliable task), then the
+        //    answer cells are enumerated DETERMINISTICALLY (one question per coloured cell) — because an
+        //    LLM won't exhaustively list hundreds of near-identical cells (the Allianz DDQ: 382 cells).
+        //  - PLAIN grid: the LLM enumerates from the row-band chunks (small grids fit fine).
+        var sheetResults = new List<ExtractionResult>();
+        int done = 0;
+        foreach (var sheet in wb.Sheets)
         {
-            await sem.WaitAsync(ct);
-            try
+            var answerColours = await ClassifyAnswerColoursAsync(sheet, legend, warnings, opts, ct);
+            ExtractionResult r;
+            if (answerColours.Count > 0)
             {
-                var r = await Resilience.SafeExtractAsync(
-                    () => _llm.ExtractFromGridAsync(c.Payload, ct), c.Label, warnings, opts, ct);
-                opts.OnPartialResult?.Invoke("grid", r);
-                return r;
+                r = ColourGridBuilder.Enumerate(sheet, answerColours);
             }
-            finally { sem.Release(); }
-        }));
-        var gridResult = perChunk.Length == 0 ? new ExtractionResult() : ResultMerger.StitchPages(perChunk);
+            else
+            {
+                var payloads = BuildSheetPayloads(sheet, opts, warnings);
+                var perChunk = await Task.WhenAll(payloads.Select(async (p, i) =>
+                {
+                    await sem.WaitAsync(ct);
+                    try
+                    {
+                        return await Resilience.SafeExtractAsync(() => _llm.ExtractFromGridAsync(p, ct),
+                            $"sheet '{sheet.Name}' chunk {i + 1}/{payloads.Count}", warnings, opts, ct);
+                    }
+                    finally { sem.Release(); }
+                }));
+                r = perChunk.Length == 0 ? new ExtractionResult() : ResultMerger.StitchPages(perChunk);
+            }
+            opts.OnPartialResult?.Invoke("grid", r);
+            opts.OnProgress?.Invoke($"grid sheet {++done}/{wb.Sheets.Count} '{sheet.Name}': done ({r.Questions.Count} cells)");
+            sheetResults.Add(r);
+        }
+        var gridResult = sheetResults.Count == 0 ? new ExtractionResult() : ResultMerger.StitchPages(sheetResults);
 
         if (opts.Strategy != Strategy.Both)
             return ResultFinalizer.Finalize(ReconciledResult.FromSingle(gridResult), warnings);
@@ -273,6 +286,25 @@ public sealed class SpreadsheetPipeline
         var result = await _reconciler.ReconcileAsync(primary: gridResult, secondary: vision,
             Array.Empty<TableStructure>(), opts.FuzzyReconcile, ct);
         return ResultFinalizer.Finalize(result, warnings);
+    }
+
+    /// <summary>Classify a sheet's fill colours into answer colours (best-effort LLM call). Keeps only
+    /// colours that mark enough cells to be a real answer column — so a legend's few example swatches
+    /// don't get mistaken for answers. Empty result => treat the sheet as a plain grid.</summary>
+    private async Task<IReadOnlyList<AnswerColour>> ClassifyAnswerColoursAsync(
+        SheetGrid sheet, IReadOnlyList<string> legend, ConcurrentBag<string> warnings, ExtractionOptions opts, CancellationToken ct)
+    {
+        var profile = ColourGridBuilder.BuildColourProfile(sheet, legend);
+        if (profile is null) return Array.Empty<AnswerColour>();   // no fills -> plain grid
+
+        var colours = await Resilience.TryAsync(() => _llm.DetectAnswerColoursAsync(profile, ct),
+            $"sheet '{sheet.Name}' colour scan", warnings, opts.RetryDelay, opts.OnProgress, ct);
+        if (colours is null || colours.Count == 0) return Array.Empty<AnswerColour>();
+
+        var counts = sheet.Cells.Where(c => c.Fill != null)
+            .GroupBy(c => c.Fill!, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(g => g.Key, g => g.Count(), StringComparer.OrdinalIgnoreCase);
+        return colours.Where(c => counts.GetValueOrDefault(c.Fill) >= 4).ToList();
     }
 
     /// <summary>Header rows carried into every chunk of a split sheet, so a chunked classic grid
