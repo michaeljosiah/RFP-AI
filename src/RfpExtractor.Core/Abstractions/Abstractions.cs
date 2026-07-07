@@ -12,7 +12,10 @@ public sealed record WorkbookGrid(IReadOnlyList<SheetGrid> Sheets);
 
 public sealed record SheetGrid(string Name, int Index, IReadOnlyList<GridCell> Cells);
 
-public sealed record GridCell(string Address, int Row, int Column, string Text, bool IsEmpty);
+/// <param name="Fill">Normalized RRGGBB hex of the cell's solid fill, or null for no fill. Enterprise
+/// DDQ templates colour-code answer cells (e.g. green = fill manually, yellow = dropdown) — this is
+/// the primary answer-cell signal on such sheets, independent of whether the cell is empty.</param>
+public sealed record GridCell(string Address, int Row, int Column, string Text, bool IsEmpty, string? Fill = null);
 
 /// <summary>Renders a Word/PDF/Excel file to one PNG per page.</summary>
 public interface IDocumentRenderer

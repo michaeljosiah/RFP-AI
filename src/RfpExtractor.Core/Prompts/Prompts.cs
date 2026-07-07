@@ -70,26 +70,40 @@ public static class Prompts
 
     public static readonly string Grid = """
         You are a precise spreadsheet-extraction engine for RFP/questionnaire automation.
-        You are given ONE worksheet as JSON:
+        You are given ONE worksheet (or a row-band CHUNK of one) as JSON:
         { "sheet": <name>,
-          "cells": [ {address, text} ... ]   // NON-EMPTY cells only (labels, headers, banners)
-          "empty_cells": [ <address> ... ] } // empty cells within the used range - the answer candidates
-        Return a single object with "document_schema" and "questions" as structured output.
+          "fill_summary": [ {fill, count, empty} ... ],   // distinct cell fill colours (RRGGBB) sheet-wide
+          "cells":       [ {address, text, fill?} ... ],  // NON-EMPTY cells: labels, headers, and PRE-FILLED answers
+          "empty_cells": [ {address, fill?} ... ] }        // empty cells (some are blank answer cells)
+        Return a single object { "questions": [ ... ] } as structured output — QUESTIONS ONLY. Do NOT
+        emit a document schema; it is rebuilt from your questions. Spend your whole output on questions,
+        and put answer_target + binding.address + schema_ref.row/column on EVERY one.
 
-        1. Classify the non-empty "cells" as LABEL cells (question text, row/column headers, section
-           banners). ANSWER cells are the "empty_cells" the respondent fills - those under a column
-           header and/or beside a row label.
-        2. For EACH answer cell emit: a schema entry (a data_entry table cell when it sits in a
+        FINDING THE ANSWER CELLS — the crux.
+        1. Professional questionnaires COLOUR-CODE the cells a respondent fills. Read "fill_summary"
+           to identify the ANSWER colour(s):
+             - a fill on MANY cells that are mostly EMPTY -> a manual-entry answer colour;
+             - a fill on many cells mostly PRE-FILLED with the same kind of default/formula -> a
+               drop-down answer colour (still answers — a default value does NOT disqualify it).
+           EXCLUDE, and emit NO question for:
+             - a colour whose cells are almost all non-empty computed values -> AUTO-GENERATED;
+             - dark/banner colours on heading rows -> headers/section titles;
+             - a colour confined to an "assessor" / "for office use" / "internal" area -> not the respondent's.
+           An ANSWER cell is ANY cell — in "cells" OR "empty_cells" — whose fill is an answer colour.
+        2. If NO cell carries a fill (a plain grid), fall back: answer cells are the "empty_cells"
+           sitting under a column header and/or beside a row label.
+        3. For EACH answer cell emit a schema entry (a data_entry table cell when it sits in a
            header x row grid, else an open_question item) with a unique answer_target, AND one
-           question. question_text is a fluent standalone question from section + column header +
-           row label. e.g. column "Firm AUM", row "1 Year ago" -> "What was the firm's AUM 1 year ago?"
-        3. Put binding = { "kind":"cell", "sheet":<name>, "address":<A1, e.g. B3> } on the question
-           so the answer writes straight back to that cell. Also set schema_ref.row/column to the
-           label texts.
-        4. answer_type inferred from header wording (currency/number/percentage/date/text).
-        5. verbatim_source = exact label texts; question_text may be normalised.
-        6. INVARIANT: one answer_target per answer cell, referenced by exactly one question. Ignore
-           styling-only or out-of-range cells.
+           question. Phrase question_text as a fluent standalone question from section + nearest
+           column header + row label ("Firm AUM" x "1 Year ago" -> "What was the firm's AUM 1 year
+           ago?"). If the row itself carries the full question text, use that.
+        4. binding = { "kind":"cell", "sheet":<name>, "address":<A1, e.g. I8> } so the answer writes
+           straight back to that cell; set schema_ref.row/column to the label texts.
+        5. answer_type inferred from the header/label wording (currency/number/percentage/date/yes_no/text).
+        6. verbatim_source = the exact label/question text; question_text may be normalised.
+        7. INVARIANT: exactly one answer_target per answer cell, referenced by exactly one question.
+           Emit NO question for label / header / banner / auto-generated cells. Ignore out-of-range
+           or styling-only cells.
         """;
 
     public static readonly string Decompose = """

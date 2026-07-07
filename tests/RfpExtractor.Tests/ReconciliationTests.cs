@@ -637,6 +637,34 @@ public class ReconcilerTests
         Assert.DoesNotContain(r.Report.Warnings, w => w.Contains("Low reconciliation match rate"));
     }
 
+    [Fact]
+    public void Grid_schema_is_rebuilt_from_questions_and_holds_the_invariant()
+    {
+        // Grid model returns questions only (schema empty); Rebuild synthesizes a consistent schema.
+        var r = new ExtractionResult
+        {
+            Questions =
+            {
+                new Question { QuestionId = "Q1", AnswerTarget = "AT-0001", QuestionText = "Manual answer?",
+                    Source = QuestionSource.Body /* model omitted it */, AnswerType = AnswerType.Text,
+                    SchemaRef = new SchemaRef { Row = "1", Column = "Response" },
+                    Binding = new Binding { Kind = "cell", Sheet = "DDQ", Address = "I8" } },
+                new Question { QuestionId = "Q2", AnswerTarget = "AT-0002", QuestionText = "Dropdown answer?",
+                    AnswerType = AnswerType.YesNo,
+                    SchemaRef = new SchemaRef { Row = "2", Column = "Response" },
+                    Binding = new Binding { Kind = "cell", Sheet = "DDQ", Address = "I9" } },
+            }
+        };
+
+        var rebuilt = GridSchema.Rebuild(r);
+
+        Assert.Empty(InvariantValidator.Validate(rebuilt));          // 1:1 by construction
+        Assert.All(rebuilt.Questions, q => Assert.Equal(QuestionSource.TableCell, q.Source));   // forced
+        var cells = rebuilt.DocumentSchema.Sections.SelectMany(s => s.Items).Single(i => i.Table is not null).Table!.Cells;
+        Assert.Equal(new[] { "AT-0001", "AT-0002" }, cells.Select(c => c.AnswerTarget).OrderBy(x => x));
+        Assert.All(rebuilt.Questions, q => Assert.StartsWith("grid-", q.SchemaRef.SectionId));  // relinked
+    }
+
     private static ExtractionResult Result(params Question[] qs) => new() { Questions = qs.ToList() };
 
     /// <summary>Adds a minimal schema so the invariant can hold for the primary questions.</summary>

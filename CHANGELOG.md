@@ -3,6 +3,25 @@
 Newest first. Dates are when the work landed; entries before 2026-07-04 predate version control
 (the project moved to git + GitHub `RFP-AI` on 2026-07-04) and are reconstructed from the build log.
 
+## 2026-07-07 — colour-aware grid extraction (foundation) + questions-only grid output
+
+- **Cell fill colour is now captured** (`GridCell.Fill`, normalized RRGGBB) by both spreadsheet
+  extractors, surfaced in the grid payload (fill on every cell + a sheet-wide `fill_summary`
+  histogram), and the grid prompt keys on it: answer cells = cells with an input/answer colour
+  (empty OR pre-filled formula), excluding auto-generated/header/assessor colours; falls back to
+  emptiness on plain grids. This is the primary answer signal on professional DDQ templates.
+- **Grid mode now returns questions ONLY; the document_schema is rebuilt deterministically**
+  (`GridSchema.Rebuild`) so the model spends its whole output budget on questions and a truncated
+  response can never orphan a schema target. Eliminated the 100+ orphan-target warnings; chunk
+  default lowered to 600. (+1 test; 137 total.)
+- **Result on the Allianz DDQ: correct but incomplete.** Colour-awareness makes the model find the
+  *right* cells with good phrasing (column I "Response"/"Status" answers, real question text, 0
+  warnings) — but it found 24 of the ~382 answer cells (3 answer columns/row: I yellow dropdown +
+  J/K green manual) and missed the green columns entirely. Root cause is now identification-complete
+  but ENUMERATION-limited: gpt-4o samples a few near-identical answer cells rather than emitting one
+  per coloured cell. Reliable completion needs deterministic enumeration (LLM picks the answer
+  colours; code emits one question per coloured cell) or a stronger model — scoped, pending decision.
+
 ## 2026-07-07 — grid row-band chunking (fixes truncation; colour-coded DDQs still need more)
 
 - **Large sheets are now split into row-band chunks** (`ExtractionOptions.GridChunkCells`, default

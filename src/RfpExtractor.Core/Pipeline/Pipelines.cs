@@ -37,9 +37,10 @@ public sealed record ExtractionOptions(
     public bool Decompose { get; init; } = true;
 
     /// <summary>Max cells per grid LLM call. A sheet larger than this is split into ROW-BAND chunks so
-    /// the model's structured response can't truncate (a big single-shot grid overflows the output
-    /// budget and collapses to a near-empty result). Excel analogue of <see cref="TextChunkChars"/>.</summary>
-    public int GridChunkCells { get; init; } = 1_000;
+    /// the model's response can't truncate (a big single-shot grid overflows the output budget and
+    /// collapses to a near-empty result). Kept modest because a colour-dense chunk emits a question per
+    /// answer cell. Excel analogue of <see cref="TextChunkChars"/>.</summary>
+    public int GridChunkCells { get; init; } = 600;
 }
 
 /// <summary>Per-call retry + partial-failure tolerance: with 60+ LLM calls per large document, a
@@ -298,8 +299,20 @@ public sealed class SpreadsheetPipeline
         }
         if (cells.Count == 0) return Array.Empty<string>();
 
+        // Sheet-wide fill histogram (distinct fill colour -> total count + how many are empty). Carried
+        // into EVERY chunk so the model can spot the answer colour(s) even when the sheet is chunked —
+        // e.g. "E2EFDA x254 (254 empty)" reads as a manual-entry answer colour, "EAEAEA x575 (1 empty)"
+        // as auto-generated. This is what makes a colour-coded DDQ extractable.
+        var fillSummary = cells.Where(c => c.Fill != null)
+            .GroupBy(c => c.Fill!)
+            .Select(g => new { fill = g.Key, count = g.Count(), empty = g.Count(c => c.IsEmpty) })
+            .OrderByDescending(x => x.count)
+            .Take(24)
+            .Cast<object>()
+            .ToList();
+
         if (cells.Count <= opts.GridChunkCells)
-            return new[] { Serialize(sheet.Name, cells, Array.Empty<GridCell>()) };
+            return new[] { Serialize(sheet.Name, cells, Array.Empty<GridCell>(), fillSummary) };
 
         var ordered = cells.OrderBy(c => c.Row).ThenBy(c => c.Column).ToList();
         var firstRow = ordered[0].Row;
@@ -313,22 +326,26 @@ public sealed class SpreadsheetPipeline
             // never split a single row across chunks (keep a row's label + its answer cells together)
             if (band.Count >= opts.GridChunkCells && c.Row != band[^1].Row)
             {
-                payloads.Add(Serialize(sheet.Name, band, bandIncludesHeader ? Array.Empty<GridCell>() : headerCells));
+                payloads.Add(Serialize(sheet.Name, band, bandIncludesHeader ? Array.Empty<GridCell>() : headerCells, fillSummary));
                 band = new List<GridCell>();
                 bandIncludesHeader = false;
             }
             band.Add(c);
         }
         if (band.Count > 0)
-            payloads.Add(Serialize(sheet.Name, band, bandIncludesHeader ? Array.Empty<GridCell>() : headerCells));
+            payloads.Add(Serialize(sheet.Name, band, bandIncludesHeader ? Array.Empty<GridCell>() : headerCells, fillSummary));
         return payloads;
     }
 
-    private static string Serialize(string sheetName, IReadOnlyList<GridCell> band, IReadOnlyList<GridCell> contextHeaders)
+    private static string Serialize(string sheetName, IReadOnlyList<GridCell> band,
+        IReadOnlyList<GridCell> contextHeaders, IReadOnlyList<object> fillSummary)
     {
         // Context headers (non-empty label cells) are prepended for column context; answer candidates
         // come ONLY from the band, so a header row's own answer cells (emitted with chunk 1) are never
         // re-emitted by a later chunk. Dedup by address in case a header cell also falls in the band.
+        // Fill colour travels on every cell (null omitted) so the model can key on it; the answer
+        // cells of a coloured DDQ are split across BOTH lists — empty (green manual) and non-empty
+        // (yellow dropdowns pre-filled with a formula) — hence fill on cells AND empty_cells.
         var nonEmpty = contextHeaders
             .Concat(band.Where(c => !c.IsEmpty))
             .GroupBy(c => c.Address)
@@ -336,8 +353,9 @@ public sealed class SpreadsheetPipeline
         var payload = new
         {
             sheet = sheetName,
-            cells = nonEmpty.Select(c => new { address = c.Address, text = c.Text }),
-            empty_cells = band.Where(c => c.IsEmpty).Select(c => c.Address),
+            fill_summary = fillSummary,
+            cells = nonEmpty.Select(c => new { address = c.Address, text = c.Text, fill = c.Fill }),
+            empty_cells = band.Where(c => c.IsEmpty).Select(c => new { address = c.Address, fill = c.Fill }),
         };
         return System.Text.Json.JsonSerializer.Serialize(payload, Json.Json.Compact);
     }

@@ -70,6 +70,10 @@ if (args.Contains("--adapters-only"))
         {
             var nonEmpty = s.Cells.Count(c => !c.IsEmpty);
             Console.WriteLine($"[grid] sheet '{s.Name}': {s.Cells.Count} cells ({nonEmpty} non-empty, {s.Cells.Count - nonEmpty} empty/answer)");
+            var fills = s.Cells.Where(c => c.Fill != null).GroupBy(c => c.Fill!)
+                .OrderByDescending(g => g.Count()).Take(8).ToList();
+            if (fills.Count > 0)
+                Console.WriteLine($"        fills: {string.Join(", ", fills.Select(g => $"#{g.Key}×{g.Count()}(empty {g.Count(c => c.IsEmpty)})"))}");
             foreach (var c in s.Cells.Where(c => !c.IsEmpty).Take(6))
                 Console.WriteLine($"        {c.Address} = \"{c.Text}\"");
         }

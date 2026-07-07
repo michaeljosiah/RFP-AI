@@ -175,7 +175,7 @@ public class PipelineResilienceTests
         {
             using var doc = JsonDocument.Parse(p);
             foreach (var a in doc.RootElement.GetProperty("empty_cells").EnumerateArray())
-                seen.Add(a.GetString()!);
+                seen.Add(a.GetProperty("address").GetString()!);
         }
         var expected = cells.Where(c => c.IsEmpty).Select(c => c.Address).OrderBy(x => x).ToList();
         Assert.Equal(expected, seen.OrderBy(x => x).ToList());   // no duplicate, no miss
@@ -221,6 +221,8 @@ public class PipelineResilienceTests
         int nonEmpty = doc.RootElement.GetProperty("cells").GetArrayLength();
         int empty = doc.RootElement.GetProperty("empty_cells").GetArrayLength();
         Assert.True(nonEmpty + empty <= 50, $"cap not applied: {nonEmpty}+{empty}");
-        Assert.Equal(JsonValueKind.String, doc.RootElement.GetProperty("empty_cells")[0].ValueKind); // bare addresses
+        var firstEmpty = doc.RootElement.GetProperty("empty_cells")[0];          // now {address, fill?}
+        Assert.Equal(JsonValueKind.Object, firstEmpty.ValueKind);
+        Assert.Equal(JsonValueKind.String, firstEmpty.GetProperty("address").ValueKind);
     }
 }

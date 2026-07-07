@@ -25,13 +25,31 @@ public sealed class TelerikSpreadsheetExtractor : ISpreadsheetExtractor
                 {
                     CellSelection cell = ws.Cells[r, c];
                     string text = (cell.GetValue().Value?.RawValue ?? "").Trim();
-                    cells.Add(new GridCell(A1(r, c), r, c, text, string.IsNullOrWhiteSpace(text)));
+                    cells.Add(new GridCell(A1(r, c), r, c, text, string.IsNullOrWhiteSpace(text), FillHex(cell)));
                 }
             }
             sheets.Add(new SheetGrid(ws.Name, si++, cells));
         }
 
         return Task.FromResult(new WorkbookGrid(sheets));
+    }
+
+    /// <summary>Normalized RRGGBB of a cell's solid fill, or null for no fill / non-RGB / white.
+    /// DDQ templates colour-code answer cells, so this is the primary answer signal on such sheets.</summary>
+    private static string? FillHex(CellSelection cell)
+    {
+        try
+        {
+            if (cell.GetFill().Value is PatternFill pf)
+            {
+                var col = pf.PatternColor.LocalValue;   // ARGB bytes; automatic / no-fill -> A == 0
+                if (col.A == 0) return null;
+                var hex = $"{col.R:X2}{col.G:X2}{col.B:X2}";
+                return hex == "FFFFFF" ? null : hex;    // plain white = no highlight
+            }
+        }
+        catch { /* theme/gradient/unresolved -> treat as no highlight */ }
+        return null;
     }
 
     // 0-based (row,col) -> A1 (e.g. 0,0 -> "A1")
