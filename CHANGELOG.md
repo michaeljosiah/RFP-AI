@@ -3,6 +3,25 @@
 Newest first. Dates are when the work landed; entries before 2026-07-04 predate version control
 (the project moved to git + GitHub `RFP-AI` on 2026-07-04) and are reconstructed from the build log.
 
+## 2026-07-07 — Excel render fix; grid-extraction limits documented
+
+- **Render no longer crashes on documents with embedded images.** A branded Excel DDQ hit
+  `ImagePropertiesResolver and JpegImageConverter cannot be both null` during xlsx→PDF export
+  (Telerik needs a cross-platform image decoder). Added the `Telerik.Documents.ImageUtils` package
+  and wire its resolver once in `TelerikRenderer`'s static ctor. This affects any image-bearing
+  docx/xlsx/pdf in a vision/both run, not just Excel.
+- **A spreadsheet render failure now degrades gracefully.** The grid leg is authoritative for
+  Excel, so a vision-cross-check render failure warns ("Vision cross-check skipped…") and falls
+  back to grid-only instead of sinking the run. (+1 test, 135 total.)
+- **Known limitation (not yet fixed): grid extraction under-performs on large, colour-coded DDQ
+  templates.** On a 188×21 DDQ (~382 answer cells marked by fill colour — green=manual,
+  yellow=dropdown — of which 127 are pre-filled formulas), the single-shot grid call returned a
+  degenerate 1-question result (output truncation on the oversized payload; orphan schema targets).
+  Two root causes: (a) the per-sheet grid payload isn't chunked, so a large sheet overflows the
+  model's output budget; (b) the answer signal is cell *emptiness*, but professional templates mark
+  answers by *fill colour* and many answer cells are pre-filled. Fix (grid chunking + colour-aware
+  answer detection) is scoped but not yet built. Simple/empty-cell grids are unaffected.
+
 ## 2026-07-04 — positional grid reconciliation (phase 4)
 
 - **New reconciler phase: positional cell matching.** When the vision leg re-derives a grid but

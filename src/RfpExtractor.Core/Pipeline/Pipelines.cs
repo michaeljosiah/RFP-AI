@@ -226,8 +226,20 @@ public sealed class SpreadsheetPipeline
         if (opts.Strategy != Strategy.Both)
             return ResultFinalizer.Finalize(ReconciledResult.FromSingle(gridResult), warnings);
 
-        // optional vision cross-check (xlsx -> pdf -> image)
-        var pages = await _renderer.RenderToImagesAsync(path, opts.Dpi, ct);
+        // optional vision cross-check (xlsx -> pdf -> image). The grid leg is AUTHORITATIVE for a
+        // spreadsheet, so a render failure (an embedded image Telerik can't rasterize, an unsupported
+        // feature) must never sink the run — warn and return the grid result alone.
+        IReadOnlyList<PageImage> pages;
+        try
+        {
+            pages = await _renderer.RenderToImagesAsync(path, opts.Dpi, ct);
+        }
+        catch (OperationCanceledException) { throw; }
+        catch (Exception ex)
+        {
+            warnings.Add($"Vision cross-check skipped: could not render the workbook to images ({ex.Message}). Grid extraction used alone.");
+            return ResultFinalizer.Finalize(ReconciledResult.FromSingle(gridResult), warnings);
+        }
         var per = await Task.WhenAll(pages.Select(async p =>
         {
             await sem.WaitAsync(ct);

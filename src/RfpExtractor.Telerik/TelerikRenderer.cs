@@ -6,12 +6,24 @@ using FlowToPdf = Telerik.Windows.Documents.Flow.FormatProviders.Pdf.PdfFormatPr
 using FixedPdf = Telerik.Windows.Documents.Fixed.FormatProviders.Pdf.PdfFormatProvider;
 using XlsxProvider = Telerik.Windows.Documents.Spreadsheet.FormatProviders.OpenXml.Xlsx.XlsxFormatProvider;
 using SheetToPdf = Telerik.Windows.Documents.Spreadsheet.FormatProviders.Pdf.PdfFormatProvider;
+using FixedExtensibilityManager = Telerik.Windows.Documents.Extensibility.FixedExtensibilityManager;
+using TelerikImageResolver = Telerik.Documents.ImageUtils.ImagePropertiesResolver;
 
 namespace RfpExtractor.Telerik;
 
 /// <summary>docx/xlsx/pdf -> PDF -> one PNG per page (Telerik + Skia).</summary>
 public sealed class TelerikRenderer : IDocumentRenderer
 {
+    static TelerikRenderer()
+    {
+        // Cross-platform image DECODING. Telerik's PDF export needs an image resolver to rasterize
+        // raster images embedded in the source document (a logo in a DDQ, a diagram in a docx).
+        // Without it, exporting ANY image-bearing document throws "ImagePropertiesResolver and
+        // JpegImageConverter cannot be both null" — which is exactly what a branded Excel DDQ hit.
+        // Telerik.Documents.ImageUtils supplies the SkiaSharp-backed implementation. Set once.
+        FixedExtensibilityManager.ImagePropertiesResolver ??= new TelerikImageResolver();
+    }
+
     public Task<IReadOnlyList<PageImage>> RenderToImagesAsync(string path, int dpi, CancellationToken ct)
     {
         var timeout = TimeSpan.FromSeconds(120);

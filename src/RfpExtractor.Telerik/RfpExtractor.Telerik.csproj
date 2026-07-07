@@ -17,6 +17,9 @@
     <PackageReference Include="Telerik.Documents.Flow.FormatProviders.Pdf" Version="2026.2.519" />
     <PackageReference Include="Telerik.Documents.Fixed" Version="2026.2.519" />
     <PackageReference Include="Telerik.Documents.Fixed.FormatProviders.Image.Skia" Version="2026.2.519" />
+    <!-- Cross-platform image DECODING for PDF export: without it, exporting any document that
+         embeds a raster image (logos in a DDQ, etc.) throws. See TelerikRenderer static ctor. -->
+    <PackageReference Include="Telerik.Documents.ImageUtils" Version="2026.2.519" />
     <PackageReference Include="Telerik.Documents.Spreadsheet" Version="2026.2.519" />
     <PackageReference Include="Telerik.Documents.Spreadsheet.FormatProviders.OpenXml" Version="2026.2.519" />
     <PackageReference Include="Telerik.Documents.Spreadsheet.FormatProviders.Pdf" Version="2026.2.519" />

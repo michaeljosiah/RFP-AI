@@ -66,6 +66,12 @@ public class PipelineResilienceTests
             Task.FromResult(new StructuredDocument(markdown, Array.Empty<TableStructure>()));
     }
 
+    private sealed class ThrowingRenderer : IDocumentRenderer
+    {
+        public Task<IReadOnlyList<PageImage>> RenderToImagesAsync(string path, int dpi, CancellationToken ct) =>
+            throw new InvalidOperationException("cannot rasterize embedded image");
+    }
+
     private sealed class FakeGrid(SheetGrid sheet) : ISpreadsheetExtractor
     {
         public Task<WorkbookGrid> ExtractAsync(string path, CancellationToken ct) =>
@@ -143,6 +149,23 @@ public class PipelineResilienceTests
         Assert.Equal(3, llm.TextCalls);
         Assert.Equal(3, result.Merged.Questions.Count);          // stitched with unique targets
         Assert.Empty(result.Report.Warnings);
+    }
+
+    [Fact]
+    public async Task Spreadsheet_render_failure_degrades_to_grid_only_with_warning()
+    {
+        // The grid leg is authoritative for Excel; a vision cross-check render failure (e.g. an
+        // embedded image Telerik can't rasterize) must warn and fall back, not sink the run.
+        var cells = new List<GridCell> { new("A1", 0, 0, "Firm AUM", false), new("B1", 0, 1, "", true) };
+        var llm = new FlakyLlm(failPage: -1);
+        var pipeline = new SpreadsheetPipeline(new FakeGrid(new SheetGrid("S", 0, cells)),
+                                               new ThrowingRenderer(), llm, new Reconciler());
+
+        // Strategy.Both triggers the vision cross-check, whose render throws.
+        var result = await pipeline.RunAsync("wb.xlsx", FastOptions(Strategy.Both), CancellationToken.None);
+
+        Assert.Contains(result.Report.Warnings, w => w.Contains("Vision cross-check skipped"));
+        Assert.Equal(1, result.Merged.Questions.Count);   // grid question survived; no crash
     }
 
     [Fact]
