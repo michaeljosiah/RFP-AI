@@ -13,7 +13,9 @@ provider plugs in.
 **Flow (owned end-to-end by `ExtractionService` — hosts never re-assemble the steps):**
 
 1. **Extract** two independent legs concurrently — vision (page PNGs) + structured text (markdown
-   chunks); Excel is grid-first — each unit retried ×3, streamed, bounded in size.
+   chunks); Excel is grid-first — each unit retried ×3, streamed, bounded in size. Excel has its own
+   two-path grid design (deterministic colour-cell enumeration vs LLM chunks) — see
+   [`docs/excel-extraction.md`](docs/excel-extraction.md).
 2. **Reconcile** legs one-to-one (verbatim-first keys; optional LLM fuzzy pass), renumber
    `answer_target`s, graft secondary-only items. Result is PRINTED-level: one question per printed
    prompt.

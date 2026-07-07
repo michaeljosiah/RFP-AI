@@ -8,6 +8,7 @@ LLM calls go through **Microsoft Agent Framework**; documents are rendered/parse
 engine; the LLM is reached through a selectable provider.
 
 Design docs: [`docs/spec-telerik.html`](docs/spec-telerik.html), [`docs/spec-libreoffice.html`](docs/spec-libreoffice.html).
+**How Excel colour-coded DDQ extraction works:** [`docs/excel-extraction.md`](docs/excel-extraction.md).
 History: [`CHANGELOG.md`](CHANGELOG.md). Agent grounding: [`AGENTS.md`](AGENTS.md).
 
 > **Public repo hygiene:** real questionnaires, gateway URLs and keys are never committed.
