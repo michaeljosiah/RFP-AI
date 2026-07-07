@@ -621,7 +621,7 @@ function legBar(id, label) {
   legs[id] = el;
   return el;
 }
-const LEG_LABELS = { vision: 'Vision — pages', text: 'Text — chunks', grid: 'Grid — sheets', decompose: 'Decompose — batches' };
+const LEG_LABELS = { vision: 'Vision — pages', text: 'Text — chunks', grid: 'Grid — chunks', decompose: 'Decompose — batches' };
 function updateLeg(id, done, total) {
   const el = legs[id] || legBar(id, LEG_LABELS[id] || id);
   el.querySelector('.ct').textContent = done + ' / ' + (total > 0 ? total : '—');

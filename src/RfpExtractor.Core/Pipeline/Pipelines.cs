@@ -35,6 +35,11 @@ public sealed record ExtractionOptions(
     /// <summary>Run the post-reconciliation decomposition pass (printed questions -> atomic parts +
     /// retrieval tags). CLI flag --no-decompose disables it, leaving printed-level questions.</summary>
     public bool Decompose { get; init; } = true;
+
+    /// <summary>Max cells per grid LLM call. A sheet larger than this is split into ROW-BAND chunks so
+    /// the model's structured response can't truncate (a big single-shot grid overflows the output
+    /// budget and collapses to a near-empty result). Excel analogue of <see cref="TextChunkChars"/>.</summary>
+    public int GridChunkCells { get; init; } = 1_000;
 }
 
 /// <summary>Per-call retry + partial-failure tolerance: with 60+ LLM calls per large document, a
@@ -206,22 +211,31 @@ public sealed class SpreadsheetPipeline
         using var sem = new SemaphoreSlim(opts.MaxParallel);
 
         var wb = await _grid.ExtractAsync(path, ct);
-        opts.OnProgress?.Invoke($"grid: {wb.Sheets.Count} sheet(s); extracting...");
 
-        var perSheet = await Task.WhenAll(wb.Sheets.Select(async sheet =>
+        // Split each sheet into row-band chunks (the Excel analogue of text chunking) so a large
+        // grid's response can't truncate. Fan the chunks out in parallel like vision pages.
+        var payloadsBySheet = wb.Sheets.Select(s => (s.Name, Payloads: BuildSheetPayloads(s, opts, warnings))).ToList();
+        var totalChunks = payloadsBySheet.Sum(x => x.Payloads.Count);
+        var chunks = new List<(string Label, string Payload)>();
+        int ci = 0;
+        foreach (var (name, payloads) in payloadsBySheet)
+            foreach (var p in payloads)
+                chunks.Add(($"grid chunk {++ci}/{totalChunks} (sheet '{name}')", p));
+        opts.OnProgress?.Invoke($"grid: {totalChunks} chunk(s) across {wb.Sheets.Count} sheet(s); extracting...");
+
+        var perChunk = await Task.WhenAll(chunks.Select(async c =>
         {
             await sem.WaitAsync(ct);
             try
             {
-                var payload = BuildSheetPayload(sheet, opts, warnings);
                 var r = await Resilience.SafeExtractAsync(
-                    () => _llm.ExtractFromGridAsync(payload, ct), $"sheet '{sheet.Name}'", warnings, opts, ct);
+                    () => _llm.ExtractFromGridAsync(c.Payload, ct), c.Label, warnings, opts, ct);
                 opts.OnPartialResult?.Invoke("grid", r);
                 return r;
             }
             finally { sem.Release(); }
         }));
-        var gridResult = perSheet.Length == 0 ? new ExtractionResult() : ResultMerger.StitchPages(perSheet);
+        var gridResult = perChunk.Length == 0 ? new ExtractionResult() : ResultMerger.StitchPages(perChunk);
 
         if (opts.Strategy != Strategy.Both)
             return ResultFinalizer.Finalize(ReconciledResult.FromSingle(gridResult), warnings);
@@ -260,12 +274,20 @@ public sealed class SpreadsheetPipeline
         return ResultFinalizer.Finalize(result, warnings);
     }
 
+    /// <summary>Header rows carried into every chunk of a split sheet, so a chunked classic grid
+    /// (columns = years, rows = metrics) keeps its column-header context for phrasing questions.</summary>
+    private const int GridHeaderRows = 3;
+
     /// <summary>
-    /// Compact LLM payload: non-empty cells as {address,text}, empty cells (the answer candidates)
-    /// as a bare address list — far fewer prompt tokens than full objects per empty cell. Serialized
-    /// WITHOUT indentation (indentation is token waste). Cell count is capped with a warning.
+    /// Compact LLM payload(s) for one sheet: non-empty cells as {address,text}, empty cells (the answer
+    /// candidates) as a bare address list — far fewer prompt tokens than full objects per empty cell,
+    /// serialized WITHOUT indentation (indentation is token waste). A sheet with more than
+    /// <see cref="ExtractionOptions.GridChunkCells"/> cells is split into ROW-BAND chunks so the model's
+    /// response can't truncate; each chunk after the first also carries the sheet's header rows for
+    /// column context. Answer candidates (empty_cells) come ONLY from a chunk's own band, so no answer
+    /// cell is ever emitted by two chunks. Total cell count is capped first (with a warning).
     /// </summary>
-    public static string BuildSheetPayload(SheetGrid sheet, ExtractionOptions opts, ConcurrentBag<string> warnings)
+    public static IReadOnlyList<string> BuildSheetPayloads(SheetGrid sheet, ExtractionOptions opts, ConcurrentBag<string> warnings)
     {
         IReadOnlyList<GridCell> cells = sheet.Cells;
         if (cells.Count > opts.MaxCellsPerSheet)
@@ -274,12 +296,48 @@ public sealed class SpreadsheetPipeline
                          "payload truncated in row order. Raise MaxCellsPerSheet to cover the full sheet.");
             cells = cells.Take(opts.MaxCellsPerSheet).ToList();
         }
+        if (cells.Count == 0) return Array.Empty<string>();
 
+        if (cells.Count <= opts.GridChunkCells)
+            return new[] { Serialize(sheet.Name, cells, Array.Empty<GridCell>()) };
+
+        var ordered = cells.OrderBy(c => c.Row).ThenBy(c => c.Column).ToList();
+        var firstRow = ordered[0].Row;
+        var headerCells = ordered.Where(c => c.Row < firstRow + GridHeaderRows && !c.IsEmpty).ToList();
+
+        var payloads = new List<string>();
+        var band = new List<GridCell>();
+        var bandIncludesHeader = true;   // the first band already starts at the header rows
+        foreach (var c in ordered)
+        {
+            // never split a single row across chunks (keep a row's label + its answer cells together)
+            if (band.Count >= opts.GridChunkCells && c.Row != band[^1].Row)
+            {
+                payloads.Add(Serialize(sheet.Name, band, bandIncludesHeader ? Array.Empty<GridCell>() : headerCells));
+                band = new List<GridCell>();
+                bandIncludesHeader = false;
+            }
+            band.Add(c);
+        }
+        if (band.Count > 0)
+            payloads.Add(Serialize(sheet.Name, band, bandIncludesHeader ? Array.Empty<GridCell>() : headerCells));
+        return payloads;
+    }
+
+    private static string Serialize(string sheetName, IReadOnlyList<GridCell> band, IReadOnlyList<GridCell> contextHeaders)
+    {
+        // Context headers (non-empty label cells) are prepended for column context; answer candidates
+        // come ONLY from the band, so a header row's own answer cells (emitted with chunk 1) are never
+        // re-emitted by a later chunk. Dedup by address in case a header cell also falls in the band.
+        var nonEmpty = contextHeaders
+            .Concat(band.Where(c => !c.IsEmpty))
+            .GroupBy(c => c.Address)
+            .Select(g => g.First());
         var payload = new
         {
-            sheet = sheet.Name,
-            cells = cells.Where(c => !c.IsEmpty).Select(c => new { address = c.Address, text = c.Text }),
-            empty_cells = cells.Where(c => c.IsEmpty).Select(c => c.Address),
+            sheet = sheetName,
+            cells = nonEmpty.Select(c => new { address = c.Address, text = c.Text }),
+            empty_cells = band.Where(c => c.IsEmpty).Select(c => c.Address),
         };
         return System.Text.Json.JsonSerializer.Serialize(payload, Json.Json.Compact);
     }

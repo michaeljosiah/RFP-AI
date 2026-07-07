@@ -152,6 +152,36 @@ public class PipelineResilienceTests
     }
 
     [Fact]
+    public async Task Large_sheet_is_chunked_and_every_answer_cell_is_covered_exactly_once()
+    {
+        // 60 rows x 3 cols (label + 2 answer cells) = 180 cells; a small GridChunkCells forces chunks.
+        var cells = new List<GridCell>();
+        for (int r = 0; r < 60; r++)
+        {
+            cells.Add(new GridCell($"A{r + 1}", r, 0, $"Question {r}", false));
+            cells.Add(new GridCell($"B{r + 1}", r, 1, "", true));
+            cells.Add(new GridCell($"C{r + 1}", r, 2, "", true));
+        }
+        var llm = new FlakyLlm(failPage: -1);
+        var opts = FastOptions(Strategy.Text) with { GridChunkCells = 60 };   // ~20 rows per chunk
+        var pipeline = new SpreadsheetPipeline(new FakeGrid(new SheetGrid("S", 0, cells)),
+                                               new FakeRenderer(0), llm, new Reconciler());
+
+        await pipeline.RunAsync("wb.xlsx", opts, CancellationToken.None);
+
+        Assert.True(llm.GridPayloads.Count > 1, $"sheet should have been chunked, got {llm.GridPayloads.Count}");
+        var seen = new List<string>();
+        foreach (var p in llm.GridPayloads)
+        {
+            using var doc = JsonDocument.Parse(p);
+            foreach (var a in doc.RootElement.GetProperty("empty_cells").EnumerateArray())
+                seen.Add(a.GetString()!);
+        }
+        var expected = cells.Where(c => c.IsEmpty).Select(c => c.Address).OrderBy(x => x).ToList();
+        Assert.Equal(expected, seen.OrderBy(x => x).ToList());   // no duplicate, no miss
+    }
+
+    [Fact]
     public async Task Spreadsheet_render_failure_degrades_to_grid_only_with_warning()
     {
         // The grid leg is authoritative for Excel; a vision cross-check render failure (e.g. an

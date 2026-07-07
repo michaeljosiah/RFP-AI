@@ -3,6 +3,21 @@
 Newest first. Dates are when the work landed; entries before 2026-07-04 predate version control
 (the project moved to git + GitHub `RFP-AI` on 2026-07-04) and are reconstructed from the build log.
 
+## 2026-07-07 — grid row-band chunking (fixes truncation; colour-coded DDQs still need more)
+
+- **Large sheets are now split into row-band chunks** (`ExtractionOptions.GridChunkCells`, default
+  1000), the Excel analogue of the text chunker: each chunk carries the sheet's header rows for
+  column context, and answer candidates (empty_cells) come only from a chunk's own band so no cell
+  is covered twice. This fixes the single-shot truncation that collapsed a 3948-cell sheet to a
+  degenerate 1-question result. Grid progress + the serve UI bar are now per-chunk. (+1 test
+  proving every answer cell is covered exactly once; 136 total.)
+- **Empirical result on the colour-coded DDQ: chunking alone is NOT enough.** The run went 1 → 12
+  questions, but they are largely the wrong cells (the orange assessor scoring columns, generic
+  "TP related question" placeholders) with 30 orphan-target warnings. Root cause confirmed: the 255
+  empty *answer* cells are indistinguishable from ~2,500 empty *spacer* cells without the fill-colour
+  signal, so the model guesses. Chunking fixes truncation (identification is a separate problem);
+  this template needs colour-aware answer detection (scoped, not built).
+
 ## 2026-07-07 — Excel render fix; grid-extraction limits documented
 
 - **Render no longer crashes on documents with embedded images.** A branded Excel DDQ hit
