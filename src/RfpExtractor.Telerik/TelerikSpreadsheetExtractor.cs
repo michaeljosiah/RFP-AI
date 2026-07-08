@@ -34,21 +34,30 @@ public sealed class TelerikSpreadsheetExtractor : ISpreadsheetExtractor
         return Task.FromResult(new WorkbookGrid(sheets));
     }
 
-    /// <summary>Normalized RRGGBB of a cell's solid fill, or null for no fill / non-RGB / white.
-    /// DDQ templates colour-code answer cells, so this is the primary answer signal on such sheets.</summary>
+    /// <summary>A stable key for a cell's solid fill (RRGGBB for a local colour, or "theme-{name}" for
+    /// a theme colour), or null for no fill / white. DDQ templates colour-code answer cells — and often
+    /// use a THEME colour (Excel's default palette, e.g. a light-blue accent) rather than a hard RGB, so
+    /// theme fills must be captured too or the answer cells look unhighlighted.</summary>
     private static string? FillHex(CellSelection cell)
     {
         try
         {
             if (cell.GetFill().Value is PatternFill pf)
             {
-                var col = pf.PatternColor.LocalValue;   // ARGB bytes; automatic / no-fill -> A == 0
+                var tc = pf.PatternColor;
+                if (tc.IsFromTheme)
+                {
+                    var name = tc.ThemeColorType.ToString();
+                    // a Background/Light theme slot is the page background (white), not a highlight.
+                    return name.StartsWith("Background") || name.StartsWith("Light") ? null : $"theme-{name}";
+                }
+                var col = tc.LocalValue;                   // ARGB bytes; automatic / no-fill -> A == 0
                 if (col.A == 0) return null;
                 var hex = $"{col.R:X2}{col.G:X2}{col.B:X2}";
-                return hex == "FFFFFF" ? null : hex;    // plain white = no highlight
+                return hex == "FFFFFF" ? null : hex;       // plain white = no highlight
             }
         }
-        catch { /* theme/gradient/unresolved -> treat as no highlight */ }
+        catch { /* gradient / unresolved -> treat as no highlight */ }
         return null;
     }
 

@@ -26,3 +26,6 @@ tests/RfpExtractor.Tests/TestData/*.xlsm
 .vs/
 .idea/
 *.suo
+
+# Local archive/backup zips — never commit (GitHub 100MB limit)
+*.zip

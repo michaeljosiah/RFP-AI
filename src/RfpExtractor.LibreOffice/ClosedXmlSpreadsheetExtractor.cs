@@ -46,7 +46,15 @@ public sealed class ClosedXmlSpreadsheetExtractor : ISpreadsheetExtractor
             var fill = cell.Style.Fill;
             if (fill.PatternType == XLFillPatternValues.None) return null;
             var col = fill.BackgroundColor;
-            if (col is null || col.ColorType != XLColorType.Color) return null;   // skip theme/indexed we can't trust
+            if (col is null) return null;
+            if (col.ColorType == XLColorType.Theme)
+            {
+                var name = col.ThemeColor.ToString();
+                // a Background/Light theme slot is the page background (white), not a highlight.
+                return name.StartsWith("Background") || name.StartsWith("Light") ? null
+                    : $"theme-{col.ThemeColor}-{col.ThemeTint:0.00}";
+            }
+            if (col.ColorType != XLColorType.Color) return null;         // skip indexed we can't trust
             var c = col.Color;
             if (c.A == 0) return null;
             var hex = $"{c.R:X2}{c.G:X2}{c.B:X2}";

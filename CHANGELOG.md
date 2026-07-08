@@ -3,6 +3,20 @@
 Newest first. Dates are when the work landed; entries before 2026-07-04 predate version control
 (the project moved to git + GitHub `RFP-AI` on 2026-07-04) and are reconstructed from the build log.
 
+## 2026-07-08 — capture THEME fill colours (Excel's default palette)
+
+- **Theme-based cell fills are now captured**, not just hard RGB fills. A second DDQ template
+  ("Fund Manager Due Diligence Questionnaire") marked its answer cells with a **theme colour**
+  (`Accent1`, a light-blue "to be filled" highlight) rather than a literal RGB — which our extractor
+  silently dropped (Telerik `PatternColor.LocalValue` and ClosedXML non-`Color` types both returned
+  null), so the answer cells looked unhighlighted and the reliable colour path never triggered. Both
+  extractors now resolve theme fills to a stable key (`theme-Accent1`, `theme-{slot}-{tint}`), while
+  **Background/Light theme slots** (the white page background) are treated as "no highlight". Theme
+  colours are Excel's default palette, so this unblocks the majority of professional templates.
+- Verified via `--adapters-only` on the new file: the answer cells now surface as
+  `theme-Accent1 × 54 (all empty)` on sheet 6 and `× 106 (all empty)` on sheet 6.1, with the page
+  background correctly ignored. RGB-filled templates (the Allianz DDQ) are unaffected. 139 tests pass.
+
 ## 2026-07-07 — deterministic colour-cell enumeration (Excel DDQ extraction works)
 
 - **Colour-coded spreadsheets now extract completely and deterministically.** An LLM does the small,
