@@ -5,6 +5,13 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <LangVersion>latest</LangVersion>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <NoWarn>$(NoWarn);CS1591</NoWarn>
+    <PackageId>RfpExtractor.LibreOffice</PackageId>
+    <Version>1.0.0</Version>
+    <Description>Fully OSS adapters (Gotenberg renderer, Open XML text walker, ClosedXML spreadsheet grid) for RfpExtractor.Core. All dependencies restore from nuget.org.</Description>
+    <RepositoryUrl>https://github.com/michaeljosiah/RFP-AI</RepositoryUrl>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
   </PropertyGroup>
 
   <ItemGroup>

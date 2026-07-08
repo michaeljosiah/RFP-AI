@@ -9,6 +9,7 @@ engine; the LLM is reached through a selectable provider.
 
 Design docs: [`docs/spec-telerik.html`](docs/spec-telerik.html), [`docs/spec-libreoffice.html`](docs/spec-libreoffice.html).
 **How Excel DDQ extraction works** — colour-coded + tabular, deterministic: [`docs/excel-extraction.md`](docs/excel-extraction.md).
+**Embedding in your own .NET project:** [`docs/integration.md`](docs/integration.md).
 History: [`CHANGELOG.md`](CHANGELOG.md). Agent grounding: [`AGENTS.md`](AGENTS.md).
 
 > **Public repo hygiene:** real questionnaires, gateway URLs and keys are never committed.
@@ -262,8 +263,12 @@ they carry only the deterministic baseline (`expected_format` from the cell type
 
 ## Using the Core library from another solution
 
+**Full integration guide (adapter contracts, provider wiring, options, serialization):
+[`docs/integration.md`](docs/integration.md).** The short version:
+
 `RfpExtractor.Core` depends only on `Microsoft.Agents.AI` + `Microsoft.Extensions.AI` — no engine,
-host or provider SDKs — and `ExtractionService` owns the whole flow. To embed it:
+host or provider SDKs — and `ExtractionService` owns the whole flow (stateless; `dotnet pack` any of
+the three libraries for a private feed). To embed it:
 
 ```csharp
 IChatClient chat = /* any provider: OpenAI SDK, Azure v1, Anthropic, your gateway */;
@@ -339,3 +344,8 @@ an optional LLM fuzzy pass; every LLM response is streamed, chunked and retried 
 resilience. **Excel DDQs** use a three-path grid design — deterministic colour-cell and tabular-row
 enumeration, else guarded LLM chunks. Four providers, two engines, three output granularities, real-time monitoring UI.
 See [`CHANGELOG.md`](CHANGELOG.md) for the full build history and field findings.
+
+## License
+
+[MIT](LICENSE). Note the `telerik` engine additionally requires a commercial Telerik DevCraft
+licence; the `libreoffice` engine is licence-free (MIT/MPL/BSD dependencies).

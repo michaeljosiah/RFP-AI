@@ -3,6 +3,22 @@
 Newest first. Dates are when the work landed; entries before 2026-07-04 predate version control
 (the project moved to git + GitHub `RFP-AI` on 2026-07-04) and are reconstructed from the build log.
 
+## 2026-07-08 — portability pass: integration guide, packable libraries, GridDump → Core
+
+- **`docs/integration.md`** — a verified integration guide for .NET developers embedding the engine:
+  project-reference vs `dotnet pack` consumption, a complete compilable quick-start, the adapter
+  contracts (`IDocumentRenderer` / `IStructuredTextExtractor` / `ISpreadsheetExtractor`, incl. the
+  `GridCell.Fill` normalization rules the Excel paths depend on), `IChatClient` wiring per provider,
+  the `ExtractionOptions` reference, the snake_case serialization contract (`Json.Options`), progress
+  hooks, and an integration checklist. Every code sample checked against the current signatures.
+- **All three libraries are now packable** (`PackageId`/`Version`/`Description`) and ship
+  **XML doc files**, so the `///` API commentary reaches consumers as IntelliSense.
+- **`GridDump` moved CLI → Core** (`RfpExtractor.Core.Diagnostics`) with a new one-call
+  `Render(workbook, title)`: it only ever depended on the grid abstractions, and any embedding host
+  wants the resolved-grid diagnostic — the CLI now just writes what Core renders.
+- Audit results recorded: Core has **zero** host dependencies (no console/file/env/config access;
+  two NuGet packages) and the README embedding sample matches the real API surface.
+
 ## 2026-07-08 — coverage guard + `--dump-grid` diagnostic
 
 - **Coverage guard on the LLM grid path (Path C).** The one grid path that still trusts the model to

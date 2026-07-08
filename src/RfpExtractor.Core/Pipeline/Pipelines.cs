@@ -8,6 +8,9 @@ namespace RfpExtractor.Core.Pipeline;
 
 public enum Strategy { Vision, Text, Both }
 
+/// <param name="Strategy">Which extraction legs run: Vision, Text, or Both (dual-leg + reconcile).
+/// For Excel, Text means grid-only (authoritative); Both adds a vision cross-check.</param>
+/// <param name="Dpi">Render resolution for the vision leg's page images.</param>
 /// <param name="MaxParallel">Concurrent LLM calls (tune to the GenCore rate limit).</param>
 /// <param name="TextChunkChars">Max markdown chars per text-leg LLM call (~6k tokens). Bounding each
 /// request is the primary GenCore-timeout mitigation.</param>

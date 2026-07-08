@@ -110,15 +110,13 @@ if (args.Contains("--dump-grid"))
     catch (ArgumentException ex) { return Fail(ex.Message); }
 
     var wb = await gridExtractor.ExtractAsync(file, CancellationToken.None);
-    var dump = new System.Text.StringBuilder();
-    dump.AppendLine($"# grid dump — {Path.GetFileName(file)} (engine={engine}, {wb.Sheets.Count} sheet(s))");
-    foreach (var s in wb.Sheets) GridDump.AppendSheet(dump, s);
+    var dump = RfpExtractor.Core.Diagnostics.GridDump.Render(wb, $"{Path.GetFileName(file)} (engine={engine})");
 
     var dumpPath = Path.Combine(outDir, "grid-dump.txt");
-    await File.WriteAllTextAsync(dumpPath, dump.ToString(), new System.Text.UTF8Encoding(false));
+    await File.WriteAllTextAsync(dumpPath, dump, new System.Text.UTF8Encoding(false));
 
     try { Console.OutputEncoding = System.Text.Encoding.UTF8; } catch { /* redirected console — file still holds it */ }
-    var lines = dump.ToString().Replace("\r\n", "\n").Split('\n');
+    var lines = dump.Replace("\r\n", "\n").Split('\n');
     const int previewLines = 400;
     foreach (var line in lines.Take(previewLines)) Console.WriteLine(line);
     if (lines.Length > previewLines) Console.WriteLine($"... ({lines.Length - previewLines} more lines — see the file)");
