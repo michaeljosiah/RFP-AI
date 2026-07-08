@@ -215,11 +215,14 @@ public sealed class SpreadsheetPipeline
         opts.OnProgress?.Invoke($"grid: {wb.Sheets.Count} sheet(s); extracting...");
         var legend = ColourGridBuilder.FindLegend(wb);
 
-        // Each sheet takes ONE of two paths:
+        // Each sheet takes ONE of three paths, in order of reliability:
         //  - COLOUR-CODED: an LLM classifies which fills mark answers (a tiny, reliable task), then the
         //    answer cells are enumerated DETERMINISTICALLY (one question per coloured cell) — because an
-        //    LLM won't exhaustively list hundreds of near-identical cells (the Allianz DDQ: 382 cells).
-        //  - PLAIN grid: the LLM enumerates from the row-band chunks (small grids fit fine).
+        //    LLM won't exhaustively list hundreds of near-identical cells (the colour-coded DDQ: 382 cells).
+        //  - TABLE (uncoloured, one-question-per-row): an LLM classifies the column layout, then code
+        //    enumerates one question per row — because the LLM stops early when asked to list every row
+        //    (10 of 17 on a bilingual DDQ). The most common Excel questionnaire shape.
+        //  - PLAIN grid (neither): the LLM enumerates from the row-band chunks (matrices, odd layouts).
         var sheetResults = new List<ExtractionResult>();
         int done = 0;
         foreach (var sheet in wb.Sheets)
@@ -229,6 +232,10 @@ public sealed class SpreadsheetPipeline
             if (answerColours.Count > 0)
             {
                 r = ColourGridBuilder.Enumerate(sheet, answerColours);
+            }
+            else if (await TryEnumerateTableAsync(sheet, warnings, opts, ct) is { } tableResult)
+            {
+                r = tableResult;
             }
             else
             {
@@ -244,6 +251,16 @@ public sealed class SpreadsheetPipeline
                     finally { sem.Release(); }
                 }));
                 r = perChunk.Length == 0 ? new ExtractionResult() : ResultMerger.StitchPages(perChunk);
+
+                // COVERAGE GUARD (Path C only): this path trusts the LLM to LIST the questions, and it
+                // can stop early (10 of 17 on a tabular DDQ). Compare the count to a deterministic lower
+                // bound and FLAG — never fail — a suspected shortfall, so it is visible not silent. The
+                // colour and table paths are complete by construction and are not checked.
+                int answerable = CountAnswerableRows(sheet);
+                if (answerable >= CoverageFloor && r.Questions.Count < answerable * CoverageMinRatio)
+                    warnings.Add($"Sheet '{sheet.Name}': extracted {r.Questions.Count} question(s) from ~{answerable} " +
+                        "answerable row(s) — the model may have under-enumerated this uncoloured grid. " +
+                        "Inspect the resolved grid with `--dump-grid`.");
             }
             opts.OnPartialResult?.Invoke("grid", r);
             opts.OnProgress?.Invoke($"grid sheet {++done}/{wb.Sheets.Count} '{sheet.Name}': done ({r.Questions.Count} cells)");
@@ -307,9 +324,61 @@ public sealed class SpreadsheetPipeline
         return colours.Where(c => counts.GetValueOrDefault(c.Fill) >= 4).ToList();
     }
 
+    /// <summary>Deterministic TABLE path for an uncoloured sheet: an LLM classifies the column layout
+    /// (question/answer/number/category) — a tiny, reliable task — then code enumerates one question per
+    /// row. Returns null (so the caller falls back to LLM enumeration) when the sheet is too small, is
+    /// not a one-question-per-row table, the classifier fails, or the enumeration finds nothing.</summary>
+    private async Task<ExtractionResult?> TryEnumerateTableAsync(
+        SheetGrid sheet, ConcurrentBag<string> warnings, ExtractionOptions opts, CancellationToken ct)
+    {
+        var profile = TableGridBuilder.BuildTableProfile(sheet);
+        if (profile is null) return null;   // too few rows to be a questionnaire table
+
+        TableColumns? cols;
+        try
+        {
+            cols = await _llm.DetectTableColumnsAsync(profile, ct);
+            opts.OnProgress?.Invoke($"sheet '{sheet.Name}' table scan: done");
+        }
+        catch (OperationCanceledException) { throw; }
+        catch (Exception ex)
+        {
+            // a scan failure is not fatal — the plain-LLM path below still extracts the sheet.
+            warnings.Add($"Sheet '{sheet.Name}' table scan failed ({ex.Message}); used LLM enumeration.");
+            opts.OnProgress?.Invoke($"sheet '{sheet.Name}' table scan: FAILED - falling back");
+            return null;
+        }
+        if (cols is null) return null;      // not a one-question-per-row table
+
+        var result = TableGridBuilder.Enumerate(sheet, cols);
+        return result.Questions.Count > 0 ? result : null;   // empty enumeration -> fall back
+    }
+
     /// <summary>Header rows carried into every chunk of a split sheet, so a chunked classic grid
     /// (columns = years, rows = metrics) keeps its column-header context for phrasing questions.</summary>
     private const int GridHeaderRows = 3;
+
+    /// <summary>Below this many answerable rows, a single-shot LLM enumeration is reliable — don't
+    /// second-guess it (avoids noisy warnings on small sheets).</summary>
+    private const int CoverageFloor = 8;
+
+    /// <summary>Flag the LLM grid path when it covers fewer than this fraction of the answerable-row
+    /// estimate — a heuristic "you may have dropped a chunk of the sheet" nudge, not a hard failure.</summary>
+    private const double CoverageMinRatio = 0.6;
+
+    /// <summary>A deterministic LOWER BOUND on a sheet's answerable rows: rows carrying a question-like
+    /// text label (a phrase, not a code/number) AND at least one empty cell — a plausible "≥1 answer
+    /// here". Compared against the LLM's output on Path C to catch a silent under-enumeration; the
+    /// colour and table paths are complete by construction and never need it.</summary>
+    public static int CountAnswerableRows(SheetGrid sheet) =>
+        sheet.Cells.GroupBy(c => c.Row)
+            .Count(g => g.Any(c => !c.IsEmpty && IsQuestionLabel(c.Text)) && g.Any(c => c.IsEmpty));
+
+    private static bool IsQuestionLabel(string s)
+    {
+        var t = s.Trim();
+        return t.Length >= 10 && t.Any(char.IsLetter);   // a real question is a phrase, not "No." or "2024"
+    }
 
     /// <summary>
     /// Compact LLM payload(s) for one sheet: non-empty cells as {address,text}, empty cells (the answer

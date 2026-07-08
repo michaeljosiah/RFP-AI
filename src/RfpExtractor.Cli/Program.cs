@@ -19,7 +19,7 @@ if (file is null)
     Console.WriteLine("Usage: rfpx <file.docx|pdf|xlsx> [--engine=telerik|libreoffice] [--provider=gencore|azure|openai|claude]");
     Console.WriteLine("            [--model=gpt-4o] [--strategy=both|vision|text] [--granularity=hybrid|bundled|atomic]");
     Console.WriteLine("            [--dpi=200] [--max-parallel=4] [--out=DIR] [--chunk-chars=24000] [--user-email=you@firm.com]");
-    Console.WriteLine("            [--no-fuzzy] [--no-decompose] [--adapters-only]");
+    Console.WriteLine("            [--no-fuzzy] [--no-decompose] [--adapters-only] [--dump-grid]");
     Console.WriteLine("       rfpx serve [--port=5177] [--provider=...] [--no-browser]   # real-time monitoring UI");
     return 1;
 }
@@ -93,6 +93,36 @@ if (args.Contains("--adapters-only"))
     var p1 = Path.Combine(outDir, "page-001.png");
     File.WriteAllBytes(p1, imgs[0].PngBytes);
     Console.WriteLine($"[render] {imgs.Count} page(s); wrote {p1} ({imgs[0].PngBytes.Length} bytes)");
+    return 0;
+}
+
+// --- diagnostic: dump the RESOLVED grid (every cell the pipeline sees) — no LLM / credentials needed ---
+// The cheapest "see ground truth" tool: it prints exactly what the engine resolves (merged cells
+// flattened, formulas evaluated, fills captured), so a human never has to hand-parse OOXML by eye.
+if (args.Contains("--dump-grid"))
+{
+    var ext = Path.GetExtension(file).ToLowerInvariant();
+    if (ext is not (".xlsx" or ".xlsm" or ".xls"))
+        return Fail("--dump-grid is for spreadsheets (.xlsx/.xlsm/.xls). For Word/PDF use --adapters-only (dumps the resolved markdown).");
+
+    ISpreadsheetExtractor gridExtractor;
+    try { (_, _, gridExtractor) = Wiring.CreateEngine(engine, config); }
+    catch (ArgumentException ex) { return Fail(ex.Message); }
+
+    var wb = await gridExtractor.ExtractAsync(file, CancellationToken.None);
+    var dump = new System.Text.StringBuilder();
+    dump.AppendLine($"# grid dump — {Path.GetFileName(file)} (engine={engine}, {wb.Sheets.Count} sheet(s))");
+    foreach (var s in wb.Sheets) GridDump.AppendSheet(dump, s);
+
+    var dumpPath = Path.Combine(outDir, "grid-dump.txt");
+    await File.WriteAllTextAsync(dumpPath, dump.ToString(), new System.Text.UTF8Encoding(false));
+
+    try { Console.OutputEncoding = System.Text.Encoding.UTF8; } catch { /* redirected console — file still holds it */ }
+    var lines = dump.ToString().Replace("\r\n", "\n").Split('\n');
+    const int previewLines = 400;
+    foreach (var line in lines.Take(previewLines)) Console.WriteLine(line);
+    if (lines.Length > previewLines) Console.WriteLine($"... ({lines.Length - previewLines} more lines — see the file)");
+    Console.WriteLine($"[dump-grid] full dump ({lines.Length} lines) written to {dumpPath}");
     return 0;
 }
 

@@ -104,6 +104,10 @@ public class PipelineResilienceTests
         /// <summary>No colours by default -> the plain-grid (LLM chunk) path, as these tests expect.</summary>
         public Task<IReadOnlyList<AnswerColour>> DetectAnswerColoursAsync(string colourProfileJson, CancellationToken ct) =>
             Task.FromResult<IReadOnlyList<AnswerColour>>(Array.Empty<AnswerColour>());
+
+        /// <summary>Not a table -> the plain-grid (LLM chunk) path, as these tests expect.</summary>
+        public Task<TableColumns?> DetectTableColumnsAsync(string tableProfileJson, CancellationToken ct) =>
+            Task.FromResult<TableColumns?>(null);
     }
 
     /// <summary>Reports the given answer colours; counts (and refuses) LLM grid-enumeration calls.</summary>
@@ -116,6 +120,23 @@ public class PipelineResilienceTests
         { Interlocked.Increment(ref GridCalls); return Task.FromResult(new ExtractionResult()); }
         public Task<IReadOnlyList<AnswerColour>> DetectAnswerColoursAsync(string colourProfileJson, CancellationToken ct) =>
             Task.FromResult<IReadOnlyList<AnswerColour>>(colours);
+        public Task<TableColumns?> DetectTableColumnsAsync(string tableProfileJson, CancellationToken ct) =>
+            Task.FromResult<TableColumns?>(null);
+    }
+
+    /// <summary>Reports a table layout (no colours); counts (and refuses) LLM grid-enumeration calls,
+    /// proving the uncoloured table path enumerates in code.</summary>
+    private sealed class TableGridLlm(TableColumns cols) : ILlmExtractor
+    {
+        public int GridCalls;
+        public Task<ExtractionResult> ExtractFromImageAsync(PageImage page, CancellationToken ct) => throw new NotSupportedException();
+        public Task<ExtractionResult> ExtractFromTextAsync(string markdown, int? pageHint, CancellationToken ct) => throw new NotSupportedException();
+        public Task<ExtractionResult> ExtractFromGridAsync(string sheetGridJson, CancellationToken ct)
+        { Interlocked.Increment(ref GridCalls); return Task.FromResult(new ExtractionResult()); }
+        public Task<IReadOnlyList<AnswerColour>> DetectAnswerColoursAsync(string colourProfileJson, CancellationToken ct) =>
+            Task.FromResult<IReadOnlyList<AnswerColour>>(Array.Empty<AnswerColour>());
+        public Task<TableColumns?> DetectTableColumnsAsync(string tableProfileJson, CancellationToken ct) =>
+            Task.FromResult<TableColumns?>(cols);
     }
 
     private static ExtractionResult OneQuestion(string key) => new()
@@ -244,6 +265,86 @@ public class PipelineResilienceTests
         }
         var expected = cells.Where(c => c.IsEmpty).Select(c => c.Address).OrderBy(x => x).ToList();
         Assert.Equal(expected, seen.OrderBy(x => x).ToList());   // no duplicate, no miss
+    }
+
+    [Fact]
+    public async Task Uncoloured_table_enumerates_in_code_skipping_blank_template_rows()
+    {
+        // typical DDQ shape: header row 4, then question rows, then a blank NUMBERED template row.
+        // Columns B=No. D=Category E=Question F=Answer (0-based: 1,3,4,5).
+        var cells = new List<GridCell>
+        {
+            new("B4", 3, 1, "No.", false),  new("D4", 3, 3, "Category", false),
+            new("E4", 3, 4, "Question", false), new("F4", 3, 5, "Answer", false),
+
+            new("B5", 4, 1, "1", false), new("D5", 4, 3, "General", false),
+            new("E5", 4, 4, "What is your firm's AUM?", false), new("F5", 4, 5, "", true),
+
+            new("B6", 5, 1, "2", false), new("D6", 5, 3, "Risk", false),
+            new("E6", 5, 4, "Describe your risk framework.", false), new("F6", 5, 5, "", true),
+
+            new("B7", 6, 1, "3", false), new("D7", 6, 3, "ESG", false),
+            new("E7", 6, 4, "Do you have an ESG policy?", false), new("F7", 6, 5, "", true),
+
+            // blank template row: a No. but NO question text -> must be skipped
+            new("B8", 7, 1, "4", false), new("E8", 7, 4, "", true), new("F8", 7, 5, "", true),
+        };
+        var cols = new TableColumns(HeaderRow: 4, QuestionColumn: "E", AnswerColumn: "F",
+                                    NumberColumn: "B", CategoryColumn: "D", AnswerType: AnswerType.LongText);
+        var llm = new TableGridLlm(cols);
+        var pipeline = new SpreadsheetPipeline(new FakeGrid(new SheetGrid("DDQ", 0, cells)),
+                                               new FakeRenderer(0), llm, new Reconciler());
+
+        var result = await pipeline.RunAsync("wb.xlsx", FastOptions(Strategy.Text), CancellationToken.None);
+
+        Assert.Equal(3, result.Merged.Questions.Count);        // 3 question rows; blank template row skipped
+        Assert.Equal(0, llm.GridCalls);                        // enumerated in code, not by the LLM
+        Assert.Empty(result.Report.Warnings);
+        var byBinding = result.Merged.Questions.OrderBy(q => q.Binding!.Address).ToList();
+        Assert.Equal(new[] { "F5", "F6", "F7" }, byBinding.Select(q => q.Binding!.Address));   // bound to the ANSWER column
+        Assert.Contains(result.Merged.Questions, q => q.QuestionText == "Do you have an ESG policy?" && q.SectionPath == "ESG");
+    }
+
+    [Fact]
+    public async Task Coverage_guard_flags_suspected_under_enumeration_on_the_llm_grid_path()
+    {
+        // 20 answerable rows (a question label + an empty answer cell each), but the LLM returns just
+        // one question -> the guard must warn that the sheet was likely under-enumerated.
+        var cells = new List<GridCell>();
+        for (int r = 0; r < 20; r++)
+        {
+            cells.Add(new GridCell($"A{r + 1}", r, 0, $"Please describe your process for area {r}.", false));
+            cells.Add(new GridCell($"B{r + 1}", r, 1, "", true));
+        }
+        var sheet = new SheetGrid("S", 0, cells);
+        Assert.Equal(20, SpreadsheetPipeline.CountAnswerableRows(sheet));   // the deterministic lower bound
+
+        var llm = new FlakyLlm(failPage: -1);                              // returns 1 grid question
+        var pipeline = new SpreadsheetPipeline(new FakeGrid(sheet), new FakeRenderer(0), llm, new Reconciler());
+
+        var result = await pipeline.RunAsync("wb.xlsx", FastOptions(Strategy.Text), CancellationToken.None);
+
+        Assert.Contains(result.Report.Warnings,
+            w => w.Contains("under-enumerated") && w.Contains("answerable") && w.Contains("--dump-grid"));
+    }
+
+    [Fact]
+    public async Task Coverage_guard_stays_quiet_on_small_sheets()
+    {
+        // only 5 answerable rows -> below the floor, a single-shot LLM enumeration is trusted (no noise).
+        var cells = new List<GridCell>();
+        for (int r = 0; r < 5; r++)
+        {
+            cells.Add(new GridCell($"A{r + 1}", r, 0, $"Please describe your process for area {r}.", false));
+            cells.Add(new GridCell($"B{r + 1}", r, 1, "", true));
+        }
+        var llm = new FlakyLlm(failPage: -1);
+        var pipeline = new SpreadsheetPipeline(new FakeGrid(new SheetGrid("S", 0, cells)),
+                                               new FakeRenderer(0), llm, new Reconciler());
+
+        var result = await pipeline.RunAsync("wb.xlsx", FastOptions(Strategy.Text), CancellationToken.None);
+
+        Assert.DoesNotContain(result.Report.Warnings, w => w.Contains("under-enumerated"));
     }
 
     [Fact]
