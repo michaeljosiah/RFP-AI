@@ -8,7 +8,7 @@ LLM calls go through **Microsoft Agent Framework**; documents are rendered/parse
 engine; the LLM is reached through a selectable provider.
 
 Design docs: [`docs/spec-telerik.html`](docs/spec-telerik.html), [`docs/spec-libreoffice.html`](docs/spec-libreoffice.html).
-**How Excel colour-coded DDQ extraction works:** [`docs/excel-extraction.md`](docs/excel-extraction.md).
+**How Excel DDQ extraction works** — colour-coded + tabular, deterministic: [`docs/excel-extraction.md`](docs/excel-extraction.md).
 History: [`CHANGELOG.md`](CHANGELOG.md). Agent grounding: [`AGENTS.md`](AGENTS.md).
 
 > **Public repo hygiene:** real questionnaires, gateway URLs and keys are never committed.
@@ -48,7 +48,7 @@ docker --version            # ONLY needed for --engine=libreoffice
 ```powershell
 # run from the repository root (the folder containing RfpExtractor.slnx)
 dotnet build -c Release      # SUCCESS = "Build succeeded. 0 Warning(s) 0 Error(s)"
-dotnet test  -c Release      # SUCCESS = "Passed! - Failed: 0, Passed: 125"
+dotnet test  -c Release      # SUCCESS = "Passed! - Failed: 0, Passed: 142"
 ```
 (The corpus tests over real questionnaires no-op unless the documents are present locally —
 see `tests/RfpExtractor.Tests/TestData/README.md`.)
@@ -110,9 +110,26 @@ rfpx <file.docx|pdf|xlsx> [flags]
 | `--out=` | directory | `<input-dir>\extracted` | output folder (created if missing) |
 | `--user-email=` | email | OS user | sent to GenCore as `user_email` |
 | `--adapters-only` | (bare flag) | off | run engine only; NO LLM/credentials/network |
+| `--dump-grid` | (bare flag) | off | Excel only: print the RESOLVED grid (every cell + fills) and write `grid-dump.txt`; NO LLM/credentials |
 
 **Engine × provider are independent** — any engine works with any provider. Default is
 `--engine=telerik --provider=gencore`.
+
+### Excel grid extraction (deterministic where it counts)
+
+An Excel sheet takes one of three paths, tried in order of reliability — the LLM judges the sheet's
+*structure* once, then **code enumerates** the cells/rows, so the count is complete and identical every
+run (an LLM asked to *list* every answer cell stops early):
+
+1. **Colour-coded** — an LLM classifies which fill colours mark answers; code emits one question per
+   coloured cell (handles templates with hundreds of near-identical answer cells).
+2. **Tabular** (`No. | Category | Question | Answer`) — an LLM identifies the columns; code emits one
+   question per question-row, bound to that row's answer cell (blank numbered template rows skipped).
+3. **Plain / irregular** — the LLM enumerates from row-band chunks; a **coverage guard** warns when the
+   result looks short of the sheet's answerable rows.
+
+Inspect any sheet credential-free with **`--adapters-only`** (shape + fill histogram) or **`--dump-grid`**
+(the full resolved grid → `grid-dump.txt`). Full design: [`docs/excel-extraction.md`](docs/excel-extraction.md).
 
 ### Output granularity (`--granularity`)
 
@@ -193,7 +210,8 @@ dotnet run --project src/RfpExtractor.Cli -c Release -- serve --provider=openai
 | `review_queue.json` | questions found by only one leg (`needs_review = true`) |
 | `reconciliation_report.json` | counts + warnings — see the field reference below |
 
-`--adapters-only` instead writes `page-001.png` and prints diagnostics (no JSON, no LLM).
+`--adapters-only` instead writes `page-001.png` and prints diagnostics (no JSON, no LLM); `--dump-grid`
+writes `grid-dump.txt` — the resolved Excel grid (merged cells flattened, fills marked). Both are credential-free.
 
 ### `questions.json` field reference (the downstream contract)
 
@@ -291,8 +309,9 @@ src/RfpExtractor.Core         engine/provider-agnostic: models, prompts, pipelin
 src/RfpExtractor.Telerik      Telerik DPL adapters (renderer / spreadsheet)
 src/RfpExtractor.LibreOffice  OSS adapters (Gotenberg renderer / Open XML SDK text / ClosedXML spreadsheet)
 src/RfpExtractor.Cli          rfpx console app + serve UI: --engine + --provider config, IChatClient wiring
-tests/RfpExtractor.Tests      xUnit (125): invariants, reconciliation, stitching, chunking, resilience,
-                              decomposition, granularity views, model capabilities (+ optional local corpus)
+tests/RfpExtractor.Tests      xUnit (142): invariants, reconciliation, stitching, chunking, resilience,
+                              decomposition, granularity views, grid colour + table enumeration, coverage
+                              guard, model capabilities (+ optional local corpus)
 ```
 
 | Engine | Render | Text | Excel | Licensing |
@@ -314,8 +333,9 @@ nested inside layout tables, which Telerik's markdown export flattens.
 
 ## Status
 
-Builds clean on .NET 10 (**0 warnings**); **125 tests pass**. Extraction is printed-level with a
+Builds clean on .NET 10 (**0 warnings**); **142 tests pass**. Extraction is printed-level with a
 deterministic, retried, parallel decomposition pass; reconciliation is one-to-one/verbatim-first with
 an optional LLM fuzzy pass; every LLM response is streamed, chunked and retried ×3 for gateway
-resilience. Four providers, two engines, three output granularities, real-time monitoring UI.
+resilience. **Excel DDQs** use a three-path grid design — deterministic colour-cell and tabular-row
+enumeration, else guarded LLM chunks. Four providers, two engines, three output granularities, real-time monitoring UI.
 See [`CHANGELOG.md`](CHANGELOG.md) for the full build history and field findings.
