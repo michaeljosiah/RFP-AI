@@ -12,9 +12,16 @@ public sealed record WorkbookGrid(IReadOnlyList<SheetGrid> Sheets);
 
 public sealed record SheetGrid(string Name, int Index, IReadOnlyList<GridCell> Cells);
 
-/// <param name="Fill">Normalized RRGGBB hex of the cell's solid fill, or null for no fill. Enterprise
-/// DDQ templates colour-code answer cells (e.g. green = fill manually, yellow = dropdown) — this is
-/// the primary answer-cell signal on such sheets, independent of whether the cell is empty.</param>
+/// <summary>One resolved worksheet cell — exactly what the pipeline sees.</summary>
+/// <param name="Address">A1-style address ("E5").</param>
+/// <param name="Row">0-based row index (Excel row 1 = 0).</param>
+/// <param name="Column">0-based column index (Excel column A = 0).</param>
+/// <param name="Text">The evaluated/display value, trimmed — never the formula.</param>
+/// <param name="IsEmpty">True when <paramref name="Text"/> is empty/whitespace.</param>
+/// <param name="Fill">Normalized fill key: RRGGBB hex for a literal colour, a stable "theme-…" key for
+/// a theme colour, or null for no fill / white / the page background. Enterprise DDQ templates
+/// colour-code answer cells (e.g. green = fill manually, yellow = dropdown) — this is the primary
+/// answer-cell signal on such sheets, independent of whether the cell is empty.</param>
 public sealed record GridCell(string Address, int Row, int Column, string Text, bool IsEmpty, string? Fill = null);
 
 /// <summary>Renders a Word/PDF/Excel file to one PNG per page.</summary>

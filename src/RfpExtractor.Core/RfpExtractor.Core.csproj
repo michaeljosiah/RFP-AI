@@ -5,6 +5,16 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <LangVersion>latest</LangVersion>
+    <!-- Ship the XML doc comments so consumers get IntelliSense on the public API.
+         CS1591 suppressed: not every public member is doc-commented (the load-bearing ones are). -->
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <NoWarn>$(NoWarn);CS1591</NoWarn>
+    <!-- `dotnet pack src/RfpExtractor.Core` produces a consumable NuGet package (see docs/integration.md). -->
+    <PackageId>RfpExtractor.Core</PackageId>
+    <Version>1.0.0</Version>
+    <Description>Engine- and provider-agnostic RFP/DDQ questionnaire extraction: models, prompts, pipelines (incl. deterministic Excel colour/table enumeration), reconciliation, decomposition, ExtractionService. Bring an IChatClient and document-engine adapters.</Description>
+    <RepositoryUrl>https://github.com/michaeljosiah/RFP-AI</RepositoryUrl>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
   </PropertyGroup>
 
   <ItemGroup>

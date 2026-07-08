@@ -1,18 +1,29 @@
 using System.Text;
 using RfpExtractor.Core.Abstractions;
 
-namespace RfpExtractor.Cli;
+namespace RfpExtractor.Core.Diagnostics;
 
 /// <summary>
 /// Renders the RESOLVED spreadsheet grid — exactly what the pipeline sees after the engine flattens
 /// merged cells, evaluates formulas and captures fills — as human-readable text, one populated row per
 /// line. The cheapest "see ground truth" tool: it removes any need to hand-parse OOXML (which is
 /// error-prone — raw sheet XML stores merged values only at the anchor cell, so column positions lie).
+/// Lives in Core (not the CLI) because any embedding host wants this diagnostic; it depends only on
+/// the grid abstractions.
 /// </summary>
 public static class GridDump
 {
     private const int TextCap = 60;             // keep a line readable; the full text is still in the cell
     private const int MaxRowsPerSheet = 2000;   // backstop for a pathological sheet, even in the file
+
+    /// <summary>Dump a whole workbook: a header line + every sheet via <see cref="AppendSheet"/>.</summary>
+    public static string Render(WorkbookGrid workbook, string title)
+    {
+        var sb = new StringBuilder();
+        sb.AppendLine($"# grid dump — {title} ({workbook.Sheets.Count} sheet(s))");
+        foreach (var s in workbook.Sheets) AppendSheet(sb, s);
+        return sb.ToString();
+    }
 
     public static void AppendSheet(StringBuilder sb, SheetGrid sheet)
     {
