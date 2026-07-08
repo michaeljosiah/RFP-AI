@@ -14,8 +14,8 @@ provider plugs in.
 
 1. **Extract** two independent legs concurrently — vision (page PNGs) + structured text (markdown
    chunks); Excel is grid-first — each unit retried ×3, streamed, bounded in size. Excel has its own
-   two-path grid design (deterministic colour-cell enumeration vs LLM chunks) — see
-   [`docs/excel-extraction.md`](docs/excel-extraction.md).
+   three-path grid design (deterministic colour-cell OR tabular-row enumeration, else guarded LLM
+   chunks, with a coverage guard on that last path) — see [`docs/excel-extraction.md`](docs/excel-extraction.md).
 2. **Reconcile** legs one-to-one (verbatim-first keys; optional LLM fuzzy pass), renumber
    `answer_target`s, graft secondary-only items. Result is PRINTED-level: one question per printed
    prompt.
@@ -33,7 +33,7 @@ provider plugs in.
 | `src/RfpExtractor.Telerik` | commercial engine adapters (render, spreadsheet) | Telerik DPL (local NuGet feed, see `nuget.config`) |
 | `src/RfpExtractor.LibreOffice` | OSS adapters (Gotenberg render, Open XML text — used by BOTH engines, ClosedXML) | MIT/MPL packages |
 | `src/RfpExtractor.Cli` | `rfpx` console + `serve` UI; provider wiring (`Wiring`, GenCore handler, `OpenAIV1`) | OpenAI/Azure/Anthropic SDKs, ASP.NET |
-| `tests/RfpExtractor.Tests` | 125 tests, all offline/no-credential; corpus tests no-op without local documents | — |
+| `tests/RfpExtractor.Tests` | 142 tests, all offline/no-credential; corpus tests no-op without local documents | — |
 
 Composition happens in exactly one place per host: `Wiring.CreateService(engine, provider, model,
 config)`. If you need the stack, call that — do not new-up pipelines inline.
@@ -83,7 +83,7 @@ config)`. If you need the stack, call that — do not new-up pipelines inline.
 
 ```powershell
 dotnet build -c Release     # must be 0 warnings
-dotnet test  -c Release     # must be 125+ passed, 0 failed (corpus tests need local docs to be active)
+dotnet test  -c Release     # must be 142+ passed, 0 failed (corpus tests need local docs to be active)
 dotnet run --project src/RfpExtractor.Cli -c Release -- "<doc>.docx" --adapters-only "--out=out"   # offline smoke
 ```
 

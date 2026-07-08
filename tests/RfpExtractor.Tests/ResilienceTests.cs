@@ -361,7 +361,7 @@ public class PipelineResilienceTests
         var result = await pipeline.RunAsync("wb.xlsx", FastOptions(Strategy.Both), CancellationToken.None);
 
         Assert.Contains(result.Report.Warnings, w => w.Contains("Vision cross-check skipped"));
-        Assert.Equal(1, result.Merged.Questions.Count);   // grid question survived; no crash
+        Assert.Single(result.Merged.Questions);           // grid question survived; no crash
     }
 
     [Fact]
