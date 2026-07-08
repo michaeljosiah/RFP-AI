@@ -27,6 +27,18 @@ public sealed record AnswerColourDto
     public string AnswerType { get; init; } = "text";   // string, parsed tolerantly
 }
 
+/// <summary>Structured output for the table-layout classifier: which columns are what.</summary>
+public sealed record TableColumnsResult
+{
+    public bool IsTable { get; init; }
+    public int HeaderRow { get; init; }
+    public string QuestionColumn { get; init; } = "";
+    public string AnswerColumn { get; init; } = "";
+    public string? NumberColumn { get; init; }
+    public string? CategoryColumn { get; init; }
+    public string AnswerType { get; init; } = "text";   // string, parsed tolerantly
+}
+
 /// <summary>
 /// LLM extraction via Microsoft Agent Framework over any <see cref="IChatClient"/>. One agent per
 /// mode (vision / text / grid), all built and run through <see cref="StructuredAgent"/> — see that
@@ -40,6 +52,7 @@ public sealed class AgentLlmExtractor : ILlmExtractor
     private readonly AIAgent _text;
     private readonly AIAgent _grid;
     private readonly AIAgent _colours;
+    private readonly AIAgent _tableCols;
 
     public AgentLlmExtractor(IChatClient chat, ModelProfile? profile = null)
     {
@@ -59,6 +72,10 @@ public sealed class AgentLlmExtractor : ILlmExtractor
         var colourSchema = AIJsonUtilities.CreateJsonSchema(typeof(AnswerColourResult), serializerOptions: Json.Json.Options);
         _colours = StructuredAgent.Create(chat, "grid-colour-classifier", Prompts.Prompts.GridColours,
             colourSchema, "answer_colours", "Fill colours that mark respondent answer cells.", p);
+
+        var tableSchema = AIJsonUtilities.CreateJsonSchema(typeof(TableColumnsResult), serializerOptions: Json.Json.Options);
+        _tableCols = StructuredAgent.Create(chat, "grid-table-classifier", Prompts.Prompts.TableColumns,
+            tableSchema, "table_columns", "Column layout of a one-question-per-row questionnaire sheet.", p);
     }
 
     public Task<ExtractionResult> ExtractFromImageAsync(PageImage page, CancellationToken ct)
@@ -93,6 +110,23 @@ public sealed class AgentLlmExtractor : ILlmExtractor
                 c.Fill.Trim().TrimStart('#').ToUpperInvariant(),
                 QuestionDecomposer.ParseAnswerType(c.AnswerType, AnswerType.Text)))
             .ToList() ?? (IReadOnlyList<AnswerColour>)Array.Empty<AnswerColour>();
+    }
+
+    public async Task<TableColumns?> DetectTableColumnsAsync(string tableProfileJson, CancellationToken ct)
+    {
+        var json = await StructuredAgent.RunJsonAsync(_tableCols, new ChatMessage(ChatRole.User, tableProfileJson), ct);
+        var d = JsonSerializer.Deserialize<TableColumnsResult>(json, Json.Json.Options);
+        if (d is null || !d.IsTable || d.HeaderRow <= 0 || string.IsNullOrWhiteSpace(d.QuestionColumn))
+            return null;   // not a one-question-per-row table -> caller falls back to LLM enumeration
+
+        static string? Col(string? s) => string.IsNullOrWhiteSpace(s) ? null : s.Trim().ToUpperInvariant();
+        return new TableColumns(
+            HeaderRow: d.HeaderRow,
+            QuestionColumn: Col(d.QuestionColumn)!,
+            AnswerColumn: Col(d.AnswerColumn) ?? Col(d.QuestionColumn)!,
+            NumberColumn: Col(d.NumberColumn),
+            CategoryColumn: Col(d.CategoryColumn),
+            AnswerType: QuestionDecomposer.ParseAnswerType(d.AnswerType, AnswerType.LongText));
     }
 
     private static async Task<ExtractionResult> ExecuteAsync(AIAgent agent, ChatMessage message, CancellationToken ct)

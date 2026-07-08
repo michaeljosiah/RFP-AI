@@ -169,6 +169,36 @@ public static class Prompts
         5. Return ONLY answer colours. If the sheet is not colour-coded for input, return an empty list.
         """;
 
+    public static readonly string TableColumns = """
+        You inspect the TOP ROWS of a spreadsheet to decide whether it is a ONE-QUESTION-PER-ROW
+        questionnaire table, and if so, which column holds what. Input JSON:
+        { "sheet": <name>,
+          "rows": [ {row, cells:[{col, text}]} ] }   // row = 1-based Excel row; col = column LETTER
+        Return { "is_table", "header_row", "question_column", "answer_column",
+                 "number_column", "category_column", "answer_type" }.
+
+        1. is_table: true ONLY when the rows are questionnaire QUESTIONS, one per row, beneath a single
+           header row (e.g. columns like No. | Category | Question | Answer). Return FALSE for a matrix /
+           pivot / cross-tab (headers along BOTH axes), a cover/instructions sheet, or a free-form
+           layout — the caller then falls back to general extraction. When false, leave columns blank.
+        2. header_row: the 1-based Excel row number of the COLUMN-HEADER row.
+        3. question_column: the LETTER of the column whose cells are the QUESTION TEXT a respondent
+           answers (header like "Question" / "質問" / "Query" / "Item" / "Description"). If a separate
+           TRANSLATION column exists (e.g. "English Translation"), that is NOT the question column —
+           choose the column of the questionnaire's OWN primary question text.
+        4. answer_column: the LETTER of the column where the respondent WRITES the answer (header like
+           "Answer" / "回答" / "Response" / "Comment" — usually blank cells). If there is genuinely no
+           answer column, repeat the question_column.
+        5. number_column: the LETTER of a sequential row-number column ("No." / "#" / "Q"), else null.
+           (Trailing numbered-but-EMPTY rows are blank template rows — they carry no question.)
+        6. category_column: the LETTER of a section/category label column ("Category" / "カテゴリ" /
+           "Section"), else null.
+        7. answer_type: the dominant expected answer for the column — text | long_text | number |
+           currency | percentage | date | yes_no | document_upload.
+        Choose columns by the HEADER meaning, confirmed against the sample data rows. Never invent a
+        column letter that is not present in the input.
+        """;
+
     public static readonly string FuzzyMatch = """
         You match duplicate questions between two independent extractions of the SAME questionnaire
         (deterministic matching already ran; you only see the leftovers). Input JSON:

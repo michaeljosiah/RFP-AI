@@ -38,6 +38,14 @@ public interface ISpreadsheetExtractor
 /// <summary>An answer-marking fill colour on a spreadsheet and the answer type its cells expect.</summary>
 public sealed record AnswerColour(string Fill, AnswerType AnswerType);
 
+/// <summary>The column layout of a ONE-QUESTION-PER-ROW questionnaire sheet, as classified by the LLM.
+/// Columns are Excel letters ("E"); <see cref="HeaderRow"/> is the 1-based Excel row of the header.
+/// Code then enumerates one question per data row DETERMINISTICALLY (see <c>TableGridBuilder</c>) — the
+/// LLM decides the layout ONCE and never lists the rows, which is exactly where it stops early.</summary>
+public sealed record TableColumns(
+    int HeaderRow, string QuestionColumn, string AnswerColumn,
+    string? NumberColumn, string? CategoryColumn, AnswerType AnswerType);
+
 /// <summary>The LLM extraction modes, all via Microsoft Agent Framework.</summary>
 public interface ILlmExtractor
 {
@@ -49,6 +57,12 @@ public interface ILlmExtractor
     /// reliable task. Code then DETERMINISTICALLY emits one question per coloured cell (LLMs won't
     /// exhaustively enumerate hundreds of near-identical cells). Empty list = not colour-coded.</summary>
     Task<IReadOnlyList<AnswerColour>> DetectAnswerColoursAsync(string colourProfileJson, CancellationToken ct);
+
+    /// <summary>Classify an UNCOLOURED sheet's column layout: is it one-question-per-row, and which
+    /// columns are the question / answer / number / category? A tiny, reliable task; code then
+    /// enumerates the rows deterministically (LLMs stop early when asked to list every question — 10 of
+    /// 17 on a tabular DDQ). Null = not a question table, so the caller falls back to LLM enumeration.</summary>
+    Task<TableColumns?> DetectTableColumnsAsync(string tableProfileJson, CancellationToken ct);
 }
 
 public interface IReconciler

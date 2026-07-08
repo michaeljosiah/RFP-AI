@@ -3,6 +3,41 @@
 Newest first. Dates are when the work landed; entries before 2026-07-04 predate version control
 (the project moved to git + GitHub `RFP-AI` on 2026-07-04) and are reconstructed from the build log.
 
+## 2026-07-08 — coverage guard + `--dump-grid` diagnostic
+
+- **Coverage guard on the LLM grid path (Path C).** The one grid path that still trusts the model to
+  *list* the questions can stop early and drop rows silently. After it runs, the pipeline now compares
+  the question count to a deterministic lower bound — `CountAnswerableRows`, the rows carrying a
+  question-like label **and** an empty cell — and adds a **warning** when the model covered under 60% of
+  it (above an 8-row floor, so small sheets aren't second-guessed). Turns a silent under-extraction into
+  a visible flag. The colour and table paths are complete by construction and are not checked. +2 tests.
+- **`--dump-grid` diagnostic.** Prints the **resolved** grid — exactly what the pipeline sees after the
+  engine flattens merged cells, evaluates formulas and captures fills — one populated row per line
+  (`r5 | B5=1 | D5=Category | E5=<question> | I5=<translation…>`), with fills marked (`[#theme-Text1]`)
+  and empty coloured answer cells shown as `∅`. Full output is also written to `grid-dump.txt`. Needs no
+  LLM or credentials. This is the cheap "see ground truth" tool: hand-parsing raw sheet XML is
+  error-prone (merged values live only at the anchor cell, so column positions lie), and this sidesteps
+  it entirely.
+
+## 2026-07-08 — deterministic TABLE enumeration (uncoloured one-question-per-row DDQs)
+
+- **Uncoloured questionnaire tables now extract completely and deterministically.** The most common
+  Excel DDQ shape (`No. | Category | Question | Answer`, one question per row) carries no answer fill
+  colour, so it used to fall to the pure-LLM grid path — which **stops early**: on a bilingual
+  (Japanese/English) DDQ the model returned **10 of 17** questions per sheet, silently dropping the last
+  three sections. Forcing row-band chunks made it worse (per-chunk inconsistency: a hallucinated sheet
+  name, answer bindings drifting between columns, one sheet collapsing to 9 with a placeholder question).
+- Fixed with a third grid path, sibling to the colour path and built on the same principle —
+  **the LLM judges structure once, code enumerates the rows.** `DetectTableColumnsAsync` + the
+  `TableColumns` prompt classify the column layout (header row + question / answer / number / category
+  columns) from a small sample; then `TableGridBuilder.Enumerate` emits **one question per row whose
+  question cell is non-empty**, bound to that row's answer cell — skipping blank numbered template
+  rows. Guarded and ordered colour → table → plain-LLM, so a non-table sheet still falls back.
+- **Result on a bilingual DDQ: 34/34** (17 Japanese + 17 English across the two sheets), each bound to
+  its answer column (`F`), categories captured, blank template rows (No. 18–21) skipped, no phantom
+  sheets, 0 warnings. Japanese question text is kept verbatim (a JP→EN pass can follow). The colour path
+  (382-cell DDQ) and other paths are unaffected. +1 test (140 total).
+
 ## 2026-07-08 — capture THEME fill colours (Excel's default palette)
 
 - **Theme-based cell fills are now captured**, not just hard RGB fills. A second DDQ template
@@ -15,7 +50,7 @@ Newest first. Dates are when the work landed; entries before 2026-07-04 predate 
   colours are Excel's default palette, so this unblocks the majority of professional templates.
 - Verified via `--adapters-only` on the new file: the answer cells now surface as
   `theme-Accent1 × 54 (all empty)` on sheet 6 and `× 106 (all empty)` on sheet 6.1, with the page
-  background correctly ignored. RGB-filled templates (the Allianz DDQ) are unaffected. 139 tests pass.
+  background correctly ignored. RGB-filled templates (the colour-coded DDQ) are unaffected. 139 tests pass.
 
 ## 2026-07-07 — deterministic colour-cell enumeration (Excel DDQ extraction works)
 
@@ -25,7 +60,7 @@ Newest first. Dates are when the work landed; entries before 2026-07-04 predate 
   `ColourGridBuilder` enumerates in code: **one question per answer-coloured cell**, phrased from the
   row's question text + column header, schema synthesized 1:1. This closes the gap the pure-LLM path
   couldn't: LLMs won't exhaustively list hundreds of near-identical cells.
-- **Result on the Allianz DDQ: 382/382 answer cells** (254 green manual + 128 yellow dropdown across
+- **Result on the colour-coded DDQ: 382/382 answer cells** (254 green manual + 128 yellow dropdown across
   columns I/J/K), READ ME correctly skipped (legend swatches filtered by a per-colour count floor),
   0 warnings, real DDQ question text per cell, differentiated by a short column-header suffix. Up
   from 1 → 12 → 24 across the earlier iterations.
@@ -43,7 +78,7 @@ Newest first. Dates are when the work landed; entries before 2026-07-04 predate 
   (`GridSchema.Rebuild`) so the model spends its whole output budget on questions and a truncated
   response can never orphan a schema target. Eliminated the 100+ orphan-target warnings; chunk
   default lowered to 600. (+1 test; 137 total.)
-- **Result on the Allianz DDQ: correct but incomplete.** Colour-awareness makes the model find the
+- **Result on the colour-coded DDQ: correct but incomplete.** Colour-awareness makes the model find the
   *right* cells with good phrasing (column I "Response"/"Status" answers, real question text, 0
   warnings) — but it found 24 of the ~382 answer cells (3 answer columns/row: I yellow dropdown +
   J/K green manual) and missed the green columns entirely. Root cause is now identification-complete
